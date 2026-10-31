@@ -32,16 +32,16 @@ sudo bash srv-helper.sh
 
 ## اجرای GitHub
 
-**این نسخه هنوز به حساب GitHub شما ارسال نشده است.** ابتدا فایل‌های بسته ZIP را در شاخه `main` ریپازیتوری `Amirtn9/Pasarguard-SSL-Helper` جایگزین/آپلود کنید. بعد:
+**این نسخه هنوز به حساب GitHub شما ارسال نشده است.** ابتدا فایل‌های بسته ZIP را در شاخه `main` ریپازیتوری `Amirtn9/srvhelper` جایگزین/آپلود کنید. بعد:
 
 ```bash
-curl -fsSL -o install-srv-helper.sh https://raw.githubusercontent.com/Amirtn9/Pasarguard-SSL-Helper/main/install.sh
+curl -fsSL -o install-srv-helper.sh https://raw.githubusercontent.com/Amirtn9/srvhelper/main/install.sh
 less install-srv-helper.sh
 sudo bash install-srv-helper.sh
 sudo srv-helper
 ```
 
-توجه: نام نمایشی این برنامه `SRV Helper` است. اگر اسم مخزن GitHub را هم به `SRV-Helper` تغییر دهید، آدرس مخزن در `install.sh` و دستورات بالا باید مطابق آن اصلاح شود.
+نصب‌کننده برای مخزن `Amirtn9/srvhelper` تنظیم شده است. دستور نصب GitHub پس از آپلود این فایل‌ها در شاخه `main` قابل استفاده خواهد بود. ساخت این ZIP به‌تنهایی تغییری در مخزن GitHub ایجاد نمی‌کند.
 
 ## پیش‌نیاز صدور SSL
 

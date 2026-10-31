@@ -2,7 +2,7 @@
 # Install from local checkout or clone the public GitHub repository.
 set -euo pipefail
 umask 022
-REPO_URL="https://github.com/Amirtn9/Pasarguard-SSL-Helper.git"
+REPO_URL="https://github.com/Amirtn9/srvhelper.git"
 if (( EUID != 0 )); then printf 'Baraye install az sudo estefade konid.\n' >&2; exit 1; fi
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 work=''
@@ -20,7 +20,7 @@ else
     command -v curl >/dev/null || { printf 'Git ya curl niaz ast.\n' >&2; exit 1; }
     command -v tar >/dev/null || { printf 'tar niaz ast.\n' >&2; exit 1; }
     curl --proto '=https' --tlsv1.2 -fLsS -o "$work/repo.tar.gz" \
-      'https://github.com/Amirtn9/Pasarguard-SSL-Helper/archive/refs/heads/main.tar.gz'
+      'https://github.com/Amirtn9/srvhelper/archive/refs/heads/main.tar.gz'
     mkdir -p "$work/unpack"
     tar -xzf "$work/repo.tar.gz" -C "$work/unpack"
     src=$(find "$work/unpack" -mindepth 1 -maxdepth 1 -type d -print -quit)

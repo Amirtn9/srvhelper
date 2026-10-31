@@ -39,11 +39,11 @@ sudo bash srv-helper.sh
 
 ### 2. Run from GitHub **after publishing these files** in your repository
 
-The bundled `install.sh` uses the existing user repository `Amirtn9/Pasarguard-SSL-Helper`. Once you upload the files to its `main` branch:
+The bundled `install.sh` uses the existing user repository `Amirtn9/srvhelper`. Once you upload the files to its `main` branch:
 
 ```bash
 curl -fL -o install-srv-helper.sh \
-  https://raw.githubusercontent.com/Amirtn9/Pasarguard-SSL-Helper/main/install.sh
+  https://raw.githubusercontent.com/Amirtn9/srvhelper/main/install.sh
 # Inspect the downloaded installer first:
 less install-srv-helper.sh
 sudo bash install-srv-helper.sh
@@ -53,10 +53,10 @@ sudo srv-helper
 A convenient one-liner for administrators who **already trust and have reviewed the remote source**:
 
 ```bash
-sudo bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/Amirtn9/Pasarguard-SSL-Helper/main/install.sh | bash'
+sudo bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/Amirtn9/srvhelper/main/install.sh | bash'
 ```
 
-For a new GitHub repo named `SRV-Helper`, replace the repository URL in `install.sh` and the raw URL in this README. GitHub links above **will not contain SRV Helper until you push it**.
+The installer is configured for `Amirtn9/srvhelper`. The GitHub install command will work after you upload this source package to the repository's `main` branch. The repository is not modified by creating this ZIP.
 
 ## Guide: smart certificates
 
