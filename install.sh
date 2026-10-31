@@ -29,7 +29,7 @@ else
   # When git clones into a known directory, use it as source.
   [[ -d "$work/src" ]] && src="$work/src"
 fi
-for required in srv-helper.sh lib/ui.sh lib/certs.sh lib/mirrors.sh lib/dns.sh lib/system.sh hooks/srv-helper-deploy.sh; do
+for required in srv-helper.sh lib/ui.sh lib/certs.sh lib/mirrors.sh lib/dns.sh lib/system.sh lib/netoptix.sh lib/paqet.sh lib/automation.sh hooks/srv-helper-deploy.sh; do
   [[ -f "$src/$required" ]] || { printf 'File mojood nist: %s\n' "$required" >&2; exit 1; }
 done
 for shellfile in "$src/srv-helper.sh" "$src/lib/"*.sh "$src/hooks/"*.sh; do bash -n "$shellfile"; done
@@ -51,4 +51,4 @@ WRAPPER
 chmod 755 /usr/local/bin/srv-helper
 install -d -m 755 /etc/letsencrypt/renewal-hooks/deploy
 install -m 750 /opt/srv-helper/hooks/srv-helper-deploy.sh /etc/letsencrypt/renewal-hooks/deploy/srv-helper-deploy
-printf 'SRV Helper nasb shod. Ejra: sudo srv-helper\n'
+printf 'SRV Helper v1 nasb shod. Ejra: sudo srv-helper\n'

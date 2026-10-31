@@ -1,7 +1,29 @@
 #!/usr/bin/env bash
-# Ubuntu mirror switching with release validation, backup, rollback.
-# Debian is intentionally not rewritten; unsupported APT layouts are preserved.
+# Ubuntu/Debian mirror switching with Release validation, backup and rollback.
+debian_mirror_candidates() {
+  case "$1" in
+    iran) printf '%s\n' \
+      'https://mirror.iranserver.com/debian' \
+      'https://mirror.arvancloud.ir/debian' \
+      'https://mirror.pishgaman.net/debian' \
+      'https://mirror.aminidc.com/debian' \
+      'https://ftp.ir.debian.org/debian' \
+      'https://deb.debian.org/debian' ;;
+    europe) printf '%s\n' \
+      'https://deb.debian.org/debian' \
+      'https://ftp.de.debian.org/debian' \
+      'https://ftp.nl.debian.org/debian' \
+      'https://ftp.fr.debian.org/debian' \
+      'https://ftp.uk.debian.org/debian' ;;
+    usa) printf '%s\n' \
+      'https://deb.debian.org/debian' \
+      'https://ftp.us.debian.org/debian' \
+      'https://mirror.math.princeton.edu/pub/debian' ;;
+  esac
+}
 mirror_candidates() {
+  local family=${2:-ubuntu}
+  [[ "$family" == debian ]] && { debian_mirror_candidates "$1"; return; }
   case "$1" in
     iran)
       # All candidates are runtime-verified: entries can disappear or be stale.
@@ -48,13 +70,13 @@ mirror_probe() {
   printf '%s' "$secs"
 }
 rank_mirrors() {
-  local region=$1 codename=$2 url seconds i=0 jobfile
+  local region=$1 codename=$2 family=${3:-ubuntu} url seconds i=0 jobfile
   local tmp
   tmp=$(mktemp -d /tmp/srv-helper-mirrors.XXXXXXXX) || return 1
   section "TEST SORAT MIRROR | ${region^^}" >&2
   info 'Mirror ha ba 6 worker be surat parallel check mishavand...' >&2
   local -a mirrors=()
-  mapfile -t mirrors < <(mirror_candidates "$region")
+  mapfile -t mirrors < <(mirror_candidates "$region" "$family")
   for url in "${mirrors[@]}"; do
     # Each child writes to its own file, so output cannot interleave.
     (
@@ -84,13 +106,21 @@ rank_mirrors() {
   fi
   printf '%s\n' "${results[@]}" | LC_ALL=C sort -n -t '|' -k1,1 | cut -d '|' -f2-
 }
-ubuntu_sources() {
+apt_source_files() {
+  local os_id
+  os_id=$(. /etc/os-release 2>/dev/null; printf '%s' "${ID:-unknown}")
   [[ -f /etc/apt/sources.list ]] && printf '%s\n' /etc/apt/sources.list
-  [[ -f /etc/apt/sources.list.d/ubuntu.sources ]] && printf '%s\n' /etc/apt/sources.list.d/ubuntu.sources
+  if [[ "$os_id" == ubuntu && -f /etc/apt/sources.list.d/ubuntu.sources ]]; then
+    printf '%s\n' /etc/apt/sources.list.d/ubuntu.sources
+  elif [[ "$os_id" == debian && -f /etc/apt/sources.list.d/debian.sources ]]; then
+    printf '%s\n' /etc/apt/sources.list.d/debian.sources
+  fi
 }
 apply_mirror() {
-  local new=$1 old='' bdir timestamp file changed
+  local new=$1 old='' bdir timestamp file changed os_id family
   need_root && need_cmd python3 && need_cmd apt-get || return 1
+  os_id=$(. /etc/os-release 2>/dev/null; printf '%s' "${ID:-unknown}")
+  case "$os_id" in ubuntu) family=ubuntu ;; debian) family=debian ;; *) fail 'Mirror auto faghat Ubuntu/Debian ra support mikonad'; return 1 ;; esac
   [[ "$new" =~ ^https?://[a-zA-Z0-9.-]+(/[a-zA-Z0-9._/-]+)?$ ]] || { fail 'URL namotabar'; return 1; }
   local state='/var/lib/srv-helper/last-mirror'
   [[ -r "$state" ]] && IFS= read -r old < "$state"
@@ -101,15 +131,19 @@ apply_mirror() {
   while IFS= read -r file; do
     files+=("$file")
     cp -a -- "$file" "$bdir/$(basename "$file")"
-  done < <(ubuntu_sources)
+  done < <(apt_source_files)
   if ((${#files[@]} == 0)); then fail 'Ubuntu APT source peyda nashod'; return 1; fi
-  # Modify only the existing Ubuntu archive URLs; no third-party repos or security URLs.
-  if ! python3 - "$new" "$old" "${files[@]}" <<'PY'
+  # Modify only official distro archive URLs; third-party and security repositories stay unchanged.
+  if ! python3 - "$new" "$old" "$family" "${files[@]}" <<'PY'
 import pathlib, re, sys
-new, old, *files = sys.argv[1:]
-# Match only official Ubuntu archive hosts or the previously applied SRV Helper mirror.
-base = r'https?://(?:[a-z0-9-]+\.)*archive\.ubuntu\.com/ubuntu/?'
-pattern = re.compile(base + (r'|' + re.escape(old.rstrip('/')) + r'/?' if old.startswith(('http://','https://')) else ''), re.I)
+new, old, family, *files = sys.argv[1:]
+# Match only official archive URLs (never security.debian.org / Ubuntu security) or
+# the last mirror selected by SRV Helper.
+if family == "ubuntu":
+    base = r'https?://(?:[a-z0-9-]+\.)*archive\.ubuntu\.com/ubuntu/?'
+else:
+    base = r'https?://(?:deb\.debian\.org/debian|ftp\.[a-z0-9.-]+\.debian\.org/debian)/?(?=/|[\s]|$)'
+pattern = re.compile(base + (r'|' + re.escape(old.rstrip('/')) + r'/?(?=/|[\s]|$)' if old.startswith(('http://','https://')) else ''), re.I)
 changes = 0
 for name in files:
     path = pathlib.Path(name)
@@ -119,7 +153,7 @@ for name in files:
         path.write_text(updated)
         changes += 1
 if not changes:
-    print('Archive URL dar sources.list/ubuntu.sources peyda nashod; changes=0', file=sys.stderr)
+    print('Official archive URL dar APT source peyda nashod; changes=0', file=sys.stderr)
     sys.exit(3)
 PY
   then
@@ -147,7 +181,7 @@ restore_mirror() {
   IFS= read -r backup < "$pointer"
   [[ "$backup" == /var/backups/srv-helper/apt-* && -d "$backup" ]] || { fail 'Backup namotabar'; return 1; }
   confirm "APT source ha az $backup restore shavand?" || return 1
-  for original in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+  for original in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list.d/debian.sources; do
     file="$backup/$(basename "$original")"
     [[ -f "$file" ]] && cp -a -- "$file" "$original"
   done
@@ -156,27 +190,29 @@ restore_mirror() {
   success 'Mirror restore shod'
 }
 mirror_menu() {
-  local choice region code selected validated
+  local choice region code selected validated family os_id
   banner; section 'MODIRIAT APT MIRROR HA'
-  if [[ "$(. /etc/os-release; echo "$ID")" != ubuntu ]]; then
-    warn 'Mirror auto-apply faqat Ubuntu ra support mikonad; Debian/system haye digar taghir nemikonand.'
-    pause; return
-  fi
+  os_id=$(. /etc/os-release; printf '%s' "${ID:-unknown}")
+  case "$os_id" in
+    ubuntu) family=ubuntu ;;
+    debian) family=debian ;;
+    *) warn 'Mirror auto faghat Ubuntu/Debian ra support mikonad.'; pause; return ;;
+  esac
   code=$(. /etc/os-release; printf '%s' "${VERSION_CODENAME:-}")
-  [[ -n "$code" ]] || { fail 'Ubuntu codename unknown'; pause; return; }
+  [[ -n "$code" ]] || { fail 'OS codename unknown'; pause; return; }
   menu_line 1 'Iran: test + entekhab behtarin'
   menu_line 2 'Europe: DE / NL / FR / UK'
   menu_line 3 'USA: US / Princeton'
   menu_line 4 'URL mirror delkhah (ba test)'
   menu_line 5 'Bargardandan APT ghabli'
-  menu_line 0 'Bargasht'
+  menu_line 0 'Back'
   prompt 'Entekhab' choice || return
   case "$choice" in
     1) region='iran' ;;
     2) region='europe' ;;
     3) region='usa' ;;
     4)
-      prompt 'URL (mesal: https://host.tld/ubuntu)' selected || return
+      prompt 'URL mirror (Ubuntu: /ubuntu, Debian: /debian)' selected || return
       [[ "$selected" =~ ^https?://[a-zA-Z0-9.-]+(/[a-zA-Z0-9._/-]+)?$ ]] || { fail 'URL namotabar'; pause; return; }
       if ! validated=$(mirror_probe "${selected%/}" "$code"); then fail 'Mirror Release peyda nashod'; pause; return; fi
       selected=${selected%/}
@@ -188,11 +224,11 @@ mirror_menu() {
   esac
   if [[ -n "${region:-}" ]]; then
     local -a ranked=()
-    mapfile -t ranked < <(rank_mirrors "$region" "$code")
+    mapfile -t ranked < <(rank_mirrors "$region" "$code" "$family")
     if ((${#ranked[@]} == 0)); then fail 'Mirror motabar nist'; pause; return; fi
     selected=${ranked[0]}
     info "Fastest verified: $selected"
-    info 'Note: Mirror test masir Release ra check mikonad; download speed vaghei momken ast fargh konad.'
+    info 'Probe latency + Release availability ra check mikonad; speed download momken ast motefavet bashad.'
   fi
   warn 'APT sources system taghir mikonand. Backup automatic ast.'
   if confirm "Mirror $selected apply shavad?"; then apply_mirror "$selected"; fi

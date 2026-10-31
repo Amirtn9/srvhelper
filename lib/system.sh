@@ -3,6 +3,22 @@ os_label() {
   if [[ -f /etc/os-release ]]; then (. /etc/os-release; printf '%s %s' "${ID:-Linux}" "${VERSION_ID:-}")
   else uname -s; fi
 }
+
+quick_status() {
+  local os host uptime_line cpu ram disk ipv6 ping tcp dns_state
+  os=$(os_label); host=$(hostname 2>/dev/null || echo unknown)
+  uptime_line=$(uptime -p 2>/dev/null || echo unknown)
+  cpu=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo '?')
+  ram=$(free -h 2>/dev/null | awk 'NR==2 {print $3 "/" $2}')
+  disk=$(df -h / 2>/dev/null | awk 'NR==2 {print $5}')
+  ipv6=$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null || echo '?')
+  ping=$(sysctl -n net.ipv4.icmp_echo_ignore_all 2>/dev/null || echo '?')
+  tcp=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo '?')
+  if systemctl is-active --quiet systemd-resolved 2>/dev/null; then dns_state='resolved: active'; else dns_state='resolver: system'; fi
+  printf '%b\n' "${DIM}  HOST: $host | OS: $os | CPU: $cpu core | RAM: ${ram:-?} | DISK: ${disk:-?}${RESET}"
+  printf '%b\n' "${DIM}  UPTIME: $uptime_line | IPv6-disable: $ipv6 | Ping-ignore: $ping | TCP: $tcp | $dns_state${RESET}"
+}
+
 system_overview() {
   banner; section 'VASIAT SERVER'
   printf '  OS        : %s\n' "$(os_label)"
@@ -116,7 +132,7 @@ system_menu() {
     menu_line 1 'Vaziat server (CPU/RAM/disk/uptime)'
     menu_line 2 'Barrasi shabake (port/route/DNS)'
     menu_line 3 'Modiriat IPv6 + Ping'
-    menu_line 4 'Vaziat / faalsazi BBR'
+    menu_line 4 'TCP Optimizer (BBR / Hybla / Cubic)'
     menu_line 5 'Nasb 3X-UI (script rasmi)'
     menu_line 6 'Nasb ACME.sh (script rasmi)'
     menu_line 0 'Bargasht'
@@ -133,18 +149,70 @@ system_menu() {
     esac
   done
 }
-bbr_menu() {
-  local current available file='/etc/sysctl.d/91-srv-helper-bbr.conf'
-  section 'BEHINE SAZI BBR'
-  current=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo unknown)
+tcp_profile_available() {
+  local profile=$1 available
   available=$(sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null || echo '')
-  info "Current: $current | Available: $available"
-  if [[ "$current" == bbr ]]; then success 'BBR active ast'; pause; return; fi
-  if [[ " $available " != *' bbr '* ]]; then warn 'BBR dar kernel active/available nist'; pause; return; fi
-  need_root || { pause; return; }
-  confirm 'BBR + fq queuing ba sysctl faal shavad?' || return
-  printf '%s\n' 'net.core.default_qdisc = fq' 'net.ipv4.tcp_congestion_control = bbr' > "$file"
-  chmod 644 "$file"
-  sysctl -p "$file" && success 'BBR enable shod' || fail 'BBR apply fail shod'
-  pause
+  if [[ "$profile" == hybla && " $available " != *' hybla '* ]]; then
+    modprobe tcp_hybla 2>/dev/null || :
+    available=$(sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null || echo '')
+  fi
+  [[ " $available " == *" $profile "* ]]
 }
+
+tcp_profile_apply() {
+  local profile=$1 file='/etc/sysctl.d/91-srv-helper-tcp.conf' backup='' qdisc='fq' previous_cc previous_qdisc
+  need_root || return 1
+  case "$profile" in bbr|hybla|cubic) ;; *) fail 'TCP profile namotabar'; return 1 ;; esac
+  tcp_profile_available "$profile" || { fail "$profile dar kernel mojood nist"; return 1; }
+  [[ "$profile" == cubic ]] && qdisc='fq_codel'
+  previous_cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo cubic)
+  previous_qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo fq_codel)
+  install -d -m 700 "$(backup_dir)/sysctl"
+  if [[ -f "$file" ]]; then
+    backup="$(backup_dir)/sysctl/91-srv-helper-tcp.$(date -u +%Y%m%dT%H%M%SZ).bak"
+    cp -a "$file" "$backup"
+  fi
+  printf 'net.core.default_qdisc = %s\nnet.ipv4.tcp_congestion_control = %s\n' "$qdisc" "$profile" > "$file"
+  chmod 644 "$file"
+  if sysctl -p "$file" >/dev/null; then
+    success "TCP profile set shod: $profile / $qdisc"
+    return 0
+  fi
+  fail 'Apply TCP profile fail shod; rollback dar hale ejra ast'
+  if [[ -n "$backup" ]]; then cp -a "$backup" "$file"; else rm -f "$file"; fi
+  sysctl -w net.core.default_qdisc="$previous_qdisc" >/dev/null 2>&1 || :
+  sysctl -w net.ipv4.tcp_congestion_control="$previous_cc" >/dev/null 2>&1 || :
+  return 1
+}
+
+bbr_enable_auto() {
+  local current
+  current=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo unknown)
+  if [[ "$current" == bbr ]]; then success 'BBR az ghabl faal ast'; return 0; fi
+  tcp_profile_apply bbr
+}
+
+tcp_optimizer_menu() {
+  local current available choice
+  while :; do
+    banner; section 'TCP OPTIMIZER | BBR / HYBLA'
+    current=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo unknown)
+    available=$(sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null || echo unknown)
+    info "Current: $current | Available: $available"
+    menu_line 1 'Enable BBR + fq (recommended when kernel supports it)'
+    menu_line 2 'Enable Hybla (if kernel module is available)'
+    menu_line 3 'Restore Cubic default'
+    menu_line 0 'Back'
+    prompt 'Entekhab' choice || return
+    case "$choice" in
+      1) confirm 'BBR apply shavad?' && tcp_profile_apply bbr ;;
+      2) confirm 'Hybla apply shavad?' && tcp_profile_apply hybla ;;
+      3) confirm 'Cubic default apply shavad?' && tcp_profile_apply cubic ;;
+      0) return ;;
+      *) warn 'Gozine namotabar' ;;
+    esac
+    pause
+  done
+}
+
+bbr_menu() { tcp_optimizer_menu; }
