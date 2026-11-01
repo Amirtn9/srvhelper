@@ -12,6 +12,7 @@ dns_profile() {
     beshkan) printf '%s' '181.41.194.177 181.41.194.186' ;;
     tic) printf '%s' '217.218.155.155 217.218.127.127' ;;
     pishgaman) printf '%s' '5.202.100.100 5.202.100.101' ;;
+    asiatech) printf '%s' '194.36.174.161' ;;
     cloudflare) printf '%s' '1.1.1.1 1.0.0.1' ;;
     google) printf '%s' '8.8.8.8 8.8.4.4' ;;
     quad9) printf '%s' '9.9.9.9 149.112.112.112' ;;
@@ -65,10 +66,10 @@ apply_dns() {
   command -v resolvectl >/dev/null || { fail 'resolvectl peyda nashod'; return 1; }
   local dns_re='^[0-9a-fA-F:. ]+$'
   [[ "$servers" =~ $dns_re ]] || { fail 'DNS address ha namotabar hastand'; return 1; }
-  info "DNS profile: $profile ($servers)"
+  info "Profile DNS: $profile ($servers)"
   if command -v dig >/dev/null 2>&1; then
     local primary=${servers%% *}
-    info "DNS reachability test: $primary"
+    info "Test dastresi DNS: $primary"
     if ! dig +time=2 +tries=1 +short "@$primary" example.com A 2>/dev/null | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
       warn 'DNS probe javab nadad. In DNS momken ast az network shoma ghabele dastres nabashad.'
       if [[ ${SRV_AUTO_MODE:-0} == 1 ]]; then return 1; fi
@@ -168,22 +169,23 @@ rank_dns_servers() {
 }
 
 dns_finder_menu() {
-  local region choice rec successes latency name ip
-  banner; section 'IRAN DNS FINDER | PAQET STYLE'
-  menu_line 1 'Iran + ISP + TIC + Global DNS'
-  menu_line 2 'Global DNS only'
-  menu_line 0 'Back'
-  prompt 'Region' choice || return
-  case "$choice" in 1) region=iran ;; 2) region=global ;; 0|back) return ;; *) warn 'Gozine namotabar'; return ;; esac
+  local region choice rec successes latency name ip rc
+  banner; section 'DNS FINDER | TEST SORAT PASOKH'
+  menu_line 1 'DNS Iran + ISP + TIC + Jahani'
+  menu_line 2 'DNS Jahani'
+  menu_line 0 'Bargasht'
+  prompt 'Mantaghe' choice; rc=$?
+  ((rc==0)) || return "$rc"
+  case "$choice" in 1) region=iran ;; 2) region=global ;; 0) return 0 ;; *) warn 'Gozine namotabar'; return 1 ;; esac
   local -a ranked=()
   mapfile -t ranked < <(rank_dns_servers "$region")
-  if ((${#ranked[@]}==0)); then pause; return 1; fi
-  section 'NATAYEJ DNS | SUCCESS / LATENCY'
+  if ((${#ranked[@]}==0)); then warn 'DNS pasokhgo peyda nashod'; return 1; fi
+  section 'NATAYEJ | PASOKH + ZAMAN'
   local i=0
   for rec in "${ranked[@]}"; do
     IFS='|' read -r successes latency name ip <<< "$rec"
-    printf '  %2d) %-20s %-16s %s/3 success | %s ms\n' "$((++i))" "$name" "$ip" "$successes" "$latency"
-    ((i>=10)) && break
+    printf '  %2d) %-18s %-16s %s/3 | %s ms\n' "$((++i))" "$name" "$ip" "$successes" "$latency"
+    ((i>=8)) && break
   done
   local first second servers
   IFS='|' read -r _ _ _ first <<< "${ranked[0]}"
@@ -191,52 +193,90 @@ dns_finder_menu() {
   if ((${#ranked[@]}>1)); then IFS='|' read -r _ _ _ second <<< "${ranked[1]}"; fi
   servers="$first"
   [[ "$second" != "$first" ]] && servers+=" $second"
-  info "Pishnahad: $servers"
-  if confirm 'Be onvan DNS system set shavad?'; then apply_dns 'DNS Finder' "$servers"; fi
-  pause
+  info "DNS pishnahadi: $servers"
+  confirm 'In DNS ha set shavand?' || return $?
+  apply_dns 'DNS Finder' "$servers"
+}
+
+dns_profile_group_menu() {
+  local group=$1 choice profile servers rc
+  while :; do
+    banner
+    if [[ "$group" == iran ]]; then
+      section 'DNS IRAN'
+      menu_line 1 'Shecan'
+      menu_line 2 'Radar'
+      menu_line 3 '403'
+      menu_line 4 'Electro'
+      menu_line 5 'Begzar'
+      menu_line 6 'Shatel'
+      menu_line 7 'Shelter'
+      menu_line 8 'Beshkan'
+      menu_line 9 'TIC / Mokhaberat'
+      menu_line 10 'Pishgaman'
+      menu_line 11 'Asiatech'
+    else
+      section 'DNS JAHANI'
+      menu_line 1 'Cloudflare'
+      menu_line 2 'Google'
+      menu_line 3 'Quad9'
+      menu_line 4 'OpenDNS'
+      menu_line 5 'AdGuard'
+    fi
+    menu_line 0 'Bargasht'
+    prompt 'Entekhab' choice; rc=$?
+    if ((rc==20)); then SRV_BACK_REQUESTED=0; return 0; fi
+    ((rc==0)) || return "$rc"
+    if [[ "$choice" == 0 ]]; then return 0; fi
+    if [[ "$group" == iran ]]; then
+      case "$choice" in
+        1) profile=shecan ;; 2) profile=radar ;; 3) profile=online403 ;;
+        4) profile=electro ;; 5) profile=begzar ;; 6) profile=shatel ;;
+        7) profile=shelter ;; 8) profile=beshkan ;; 9) profile=tic ;;
+        10) profile=pishgaman ;; 11) profile=asiatech ;; *) warn 'Gozine namotabar'; continue ;;
+      esac
+    else
+      case "$choice" in
+        1) profile=cloudflare ;; 2) profile=google ;; 3) profile=quad9 ;;
+        4) profile=opendns ;; 5) profile=adguard ;; *) warn 'Gozine namotabar'; continue ;;
+      esac
+    fi
+    servers=$(dns_profile "$profile") || { fail 'DNS profile peyda nashod'; continue; }
+    if [[ "$profile" == radar || "$profile" == online403 ]]; then
+      warn 'In DNS ha momken ast faghat dar network haye Iran reachable bashand.'
+    fi
+    apply_dns "$profile" "$servers"
+    if [[ ${SRV_BACK_REQUESTED:-0} == 1 ]]; then SRV_BACK_REQUESTED=0; return 0; fi
+    [[ ${SRV_EXIT_REQUESTED:-0} == 1 ]] && return 0
+    pause
+    if [[ ${SRV_BACK_REQUESTED:-0} == 1 ]]; then SRV_BACK_REQUESTED=0; return 0; fi
+  done
 }
 
 dns_menu() {
-  local ch profile servers
+  local choice rc
   while :; do
-    banner; section 'DNS MANAGER | IRAN + GLOBAL'
-    menu_line 1 'Shecan (Iran)'
-    menu_line 2 'Radar Game (Iran network)'
-    menu_line 3 '403.online (Iran network)'
-    menu_line 4 'Electro (Iran)'
-    menu_line 5 'Begzar (Iran)'
-    menu_line 6 'Shatel (ISP)'
-    menu_line 7 'Shelter (Iran)'
-    menu_line 8 'Beshkan (Iran)'
-    menu_line 9 'TIC / Mokhaberat (217.218.x.x)'
-    menu_line 10 'Pishgaman (ISP)'
-    menu_line 11 'Cloudflare'
-    menu_line 12 'Google'
-    menu_line 13 'Quad9'
-    menu_line 14 'OpenDNS'
-    menu_line 15 'AdGuard'
-    menu_line 16 'Smart DNS Finder (latency test)'
-    menu_line 17 'DNS status'
-    menu_line 18 'Restore previous DNS'
-    menu_line 0 'Back'
-    prompt 'Entekhab' ch || return
-    case "$ch" in
-      1) profile=shecan ;; 2) profile=radar ;; 3) profile=online403 ;;
-      4) profile=electro ;; 5) profile=begzar ;; 6) profile=shatel ;;
-      7) profile=shelter ;; 8) profile=beshkan ;; 9) profile=tic ;;
-      10) profile=pishgaman ;; 11) profile=cloudflare ;; 12) profile=google ;;
-      13) profile=quad9 ;; 14) profile=opendns ;; 15) profile=adguard ;;
-      16) dns_finder_menu; continue ;;
-      17) dns_status; pause; continue ;;
-      18) restore_dns; pause; continue ;;
+    [[ ${SRV_EXIT_REQUESTED:-0} == 1 ]] && return
+    banner; section 'MODIRIAT DNS'
+    menu_line 1 'DNS haye Iran'
+    menu_line 2 'DNS haye Jahani'
+    menu_line 3 'Peyda kardan behtarin DNS'
+    menu_line 4 'Vaziat DNS feli'
+    menu_line 5 'Bazgasht DNS ghabli'
+    menu_line 0 'Bargasht'
+    prompt 'Entekhab' choice; rc=$?
+    if ((rc==20)); then SRV_BACK_REQUESTED=0; return; fi
+    ((rc==0)) || return "$rc"
+    case "$choice" in
+      1) dns_profile_group_menu iran ;;
+      2) dns_profile_group_menu global ;;
+      3) dns_finder_menu; pause ;;
+      4) dns_status; pause ;;
+      5) restore_dns; pause ;;
       0) return ;;
-      *) warn 'Gozine namotabar'; pause; continue ;;
+      *) warn 'Gozine namotabar'; pause ;;
     esac
-    servers=$(dns_profile "$profile") || { fail 'DNS profile peyda nashod'; continue; }
-    if [[ "$profile" == radar || "$profile" == online403 ]]; then
-      warn 'In DNS haye private-range faghat dar shabake haye Iran momken ast kar konand.'
-    fi
-    apply_dns "$profile" "$servers"
-    pause
+    [[ ${SRV_EXIT_REQUESTED:-0} == 1 ]] && return
+    if [[ ${SRV_BACK_REQUESTED:-0} == 1 ]]; then SRV_BACK_REQUESTED=0; fi
   done
 }

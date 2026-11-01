@@ -1,161 +1,113 @@
-![SRV Helper - Server Control Center](assets/srv-helper-banner.png)
-
 # SRV Helper
 
-**Version 1.0.0 | Developer: AmirTN9**  
-A Finglish-first terminal control center for SSL certificates, DNS, APT mirrors, Paqet, network tuning, security and VPS maintenance.
+![SRV Helper](assets/srv-helper-banner.png)
 
-- GitHub: <https://github.com/AmirTN9/srvhelper>
-- Main command: `sudo srv-helper`
-- Interface language: Finglish (ASCII)
-- Supported design targets: Ubuntu and Debian servers with systemd; root is required for system changes.
+**SRV Helper** is a compact, Finglish-first VPS control panel maintained by **AmirTN9**.
 
-## Features
+- GitHub: https://github.com/Amirtn9/srvhelper
+- Version: `1.0.0`
+- Supported systems: Ubuntu and Debian (some tools require systemd)
 
-### SSL Manager
+## Main sections
 
-- Manual single-domain certificate flow.
-- Smart SAN: one certificate for 2–25 domains.
-- Smart Batch: one independent certificate per domain, up to 50 domains; failures are reported and the queue continues.
-- HTTP-01 standalone or existing webroot validation.
-- Destination selection after issuance: Pasarguard, Root, or a custom absolute path.
-- Separate folder per certificate, private-key permissions, Certbot renewal deploy hook and SSL dashboard.
+### 1. SSL & Certificates
 
-### Smart Network Optimizer
+- Single: one domain, one certificate.
+- SAN: 2–25 domains in one certificate.
+- Batch: 1–50 domains, one independent certificate per domain; a domain with unresolved DNS is skipped while the next domain is checked.
+- HTTP-01 Standalone and Webroot validation.
+- Domain normalization, duplicate detection and DNS pre-check.
+- Destination: Pasarguard, `/root/ssl-certs`, or a custom absolute path.
+- Private-key permissions and automatic deployment after successful renewal.
+- Certificate list, inspection and renewal dry-run.
 
-The guided optimizer detects the VPS country (with an option to override the region), then:
+### 2. DNS & Mirrors
 
-1. Tests Iranian/ISP/TIC and international DNS resolvers against multiple domains.
-2. Ranks resolvers by successful answers and measured query latency, then proposes the best two.
-3. Tests regional Ubuntu/Debian APT mirrors by checking the correct `Release` file and response time.
-4. Applies the selected mirror with a backup and rollback on failed `apt-get update`.
-5. Enables BBR only when the running kernel reports BBR support.
-6. Prints a Finglish report describing the applied, skipped or failed actions.
+- Iranian DNS profiles, ISP resolvers and international DNS providers.
+- DNS Finder measures response success and latency before recommending resolvers.
+- Regional APT mirrors for Iran, Europe and the USA.
+- Mirror checks verify the distribution `Release` file before selection.
+- Previous DNS and APT configurations are backed up and can be restored.
 
-The optimizer runs **`apt-get update` only**. It does not run `apt-get upgrade` or silently replace the kernel. Region detection uses the VPS public-IP country endpoint at `ipinfo.io`; the region can be selected manually if the endpoint is unreachable or inaccurate.
+### 3. Smart Setup
 
-### DNS Finder and Manager
+- Detects the server region when the location service is reachable; manual region selection remains available.
+- Tests DNS resolvers and selects working candidates.
+- Tests regional APT mirrors and chooses the fastest valid result.
+- Runs `apt-get update` after mirror selection.
+- Enables BBR only when the running kernel supports it.
+- Prints a final report. Package upgrades are not run automatically.
 
-- Iranian resolvers: Shecan, Radar, 403, Electro, Begzar, Shatel, Shelter, Beshkan, Pishgaman, Asiatech, Hostiran and TIC/Mokhaberat.
-- International resolvers: Cloudflare, Google, Quad9, OpenDNS, AdGuard, ControlD and Yandex.
-- DNS Finder tests each candidate before it is offered for activation.
-- DNS changes are applied through `systemd-resolved` only, with a previous-config backup and restore option.
-- Private-range DNS addresses (for example Radar/403) may only work inside supported Iranian networks; they are not assumed to be reachable everywhere.
+### 4. Server Services & System Tools
 
-### APT Mirror Manager
+- Tunnel service status, start, stop, restart and logs.
+- Swap and ZRAM management.
+- BBR, Hybla and Cubic TCP profiles.
+- Fail2ban SSH protection and read-only ClamAV scans.
+- Cockpit monitoring installer.
+- Server overview, listening ports, routes, DNS, IPv6, Ping, MTU test and SSH audit.
 
-- Regional candidate lists for Iran, Europe and the USA.
-- Ubuntu and Debian archive layouts are supported.
-- Each candidate must return the correct distribution `Release` file before ranking.
-- Only recognized distro archive URLs and the previously selected SRV Helper mirror are changed; security repositories and unrelated third-party sources are left untouched.
-- APT sources are backed up and restored automatically if the package-index update fails.
-
-Mirror ranking is based on Release-file availability and response time, not a full sustained download-throughput benchmark. Candidate mirrors can become unavailable; runtime probing is authoritative.
-
-### Paqet Integration
-
-- Launches the official `behzadea12/Paqet-Tunnel-Manager` after downloading it to a temporary file, displaying its SHA-256 and asking for a separate execution confirmation.
-- Local dashboard for installed `paqet-*` systemd services: status, start, stop, restart and recent logs.
-- SRV Helper includes its own DNS Finder and regional mirror probe; it does not vendor or silently execute the upstream Paqet source.
-
-### SysHelper and NetOptix Tools
-
-- System dashboard: OS, CPU cores, RAM, disk, uptime, load, network interfaces, routes and listening ports.
-- IPv6 and ICMP ping-response management with persistent SRV Helper sysctl configuration and reset.
-- TCP congestion profiles: BBR, Hybla (when the kernel supports it) and Cubic.
-- Managed Swap file and persistent ZRAM service, with create/status/remove flows.
-- Read-only path MTU discovery; it does not alter the NIC MTU automatically.
-- Fail2ban SSH jail setup and status.
-- ClamAV installation and read-only malware scans (no automatic deletion or quarantine).
-- Optional Cockpit installation; TCP/9090 is not opened automatically.
-- Safe SSH port addition: the old port remains configured so the operator can test a second SSH session before removing the old port.
-
-## Installation
-
-### Option 1: Download the GitHub repository ZIP
+## Install from the GitHub repository
 
 ```bash
-sudo apt update
-sudo apt install -y curl unzip ca-certificates
-wget -O srvhelper-main.zip https://github.com/Amirtn9/srvhelper/archive/refs/heads/main.zip
-unzip srvhelper-main.zip
-cd srvhelper-main
-sudo bash install.sh
-sudo srv-helper
-```
-
-### Option 2: Clone with Git
-
-```bash
-sudo apt update
-sudo apt install -y git
 git clone https://github.com/Amirtn9/srvhelper.git
 cd srvhelper
 sudo bash install.sh
 sudo srv-helper
 ```
 
-### Option 3: Transfer the release ZIP to the VPS manually
+## Install from a ZIP archive
 
-Copy `SRV-Helper-v1.0.0.zip` to the VPS using SCP, SFTP or your hosting file manager, then run:
+For the release ZIP distributed with this project, transfer it from your computer with `scp` or download it on the VPS:
 
 ```bash
-sudo apt update
-sudo apt install -y unzip
-unzip SRV-Helper-v1.0.0.zip
+# Optional: run this on your own computer
+scp SRV-Helper-v1.0.0-simple.zip root@SERVER_IP:/root/
+
+# Then connect to the VPS and run:
+cd /root
+unzip SRV-Helper-v1.0.0-simple.zip
 cd SRV-Helper
 sudo bash install.sh
 sudo srv-helper
 ```
 
-The installer places the application in `/opt/srv-helper` and creates `/usr/local/bin/srv-helper`.
+The installer places the application under `/opt/srv-helper` and creates `/usr/local/bin/srv-helper`.
 
-### Run without installing
+## SSL requirements and troubleshooting
 
-From the extracted project directory:
+For a successful HTTP-01 certificate request:
 
-```bash
-sudo bash srv-helper.sh
-```
+1. Enter a hostname such as `pl24.pingyar.com`. If you paste an `http(s)://` URL, the hostname is extracted; IP addresses and custom ports are rejected.
+2. Its public A record must resolve to this VPS. If an AAAA record exists, IPv6 must also reach this VPS; remove an incorrect AAAA record.
+3. TCP port `80` must be reachable from the public internet for Standalone mode.
+4. If a web server already uses port `80`, select Webroot and enter the actual document root for that hostname.
+5. If a CDN or proxy is enabled, ensure `/.well-known/acme-challenge/` is forwarded to this server.
+
+Ports such as `3104`–`3110` do not conflict with HTTP-01 by themselves. The relevant port is TCP `80`.
+
+Wildcard certificates are not issued by the HTTP-01 flow; they require DNS-01 validation.
 
 ## Navigation
 
-- Enter `back` at a prompt to return to the previous menu.
-- Enter `exit` at a prompt to leave the application.
-- All interactive prompts and status messages are Finglish/ASCII.
+- Type `back` at a prompt to return to the previous menu.
+- Type `exit` to close the application.
+- Menu text is Finglish/ASCII.
 
-## Important safety notes
+## Safety
 
-- Run on a test VPS before production use. DNS, APT, TCP congestion, firewall and SSH settings are environment-specific.
-- DNS changes require an active `systemd-resolved`; this tool does not overwrite `/etc/resolv.conf` directly.
-- Private Iranian DNS endpoints may be unreachable outside the relevant ISP/datacenter networks. Only measured DNS responders are proposed by the finder.
-- APT mirror changes preserve security repositories and use a backup/rollback path. Review the selected mirror before applying it.
-- BBR/Hybla availability depends on the active kernel. SRV Helper does not install a custom kernel.
-- The SSH helper adds a second port and keeps the previous port. Reconnect through the new port before manually removing the old one.
-- Paqet Manager, 3X-UI, ACME.sh and other upstream installers are third-party code. Review their source and understand their permissions before execution. A printed SHA-256 identifies the downloaded file; it is not a publisher signature.
-- The uploaded NetOptix archive contains scripts for broad firewall blocking (ISP/private ranges, torrent and speed-test domains) and MikroTik installation. Those high-impact operations are not automatically ported because they can break SSH, Docker, private routing or production traffic. Use upstream tools only after reviewing their rules and preparing an out-of-band recovery path.
-- ClamAV scans report detections; SRV Helper does not delete files automatically.
-- Cockpit is installed without opening port 9090 in the firewall.
+- System changes require root and confirmation.
+- DNS and APT source changes create backups; failed APT updates trigger rollback.
+- DNS changes use `systemd-resolved`; systems without an active `systemd-resolved` service are not modified.
+- Firewall-wide blocking rules and automatic package upgrades are intentionally excluded from Smart Setup.
+- Always keep an out-of-band console available before changing network settings on a remote VPS.
 
 ## Tests
 
+Run the offline checks with:
+
 ```bash
 bash tests/test.sh
-bash srv-helper.sh --version
 ```
 
-The included tests are offline/static tests. They do not issue a real ACME certificate, change DNS or APT sources, install system packages, configure a firewall or start a Paqet tunnel. Those operations require a disposable VPS for end-to-end verification.
-
-## Credits and references
-
-- [Pasarguard SSL Helper](https://github.com/Amirtn9/Pasarguard-SSL-Helper) — original SSL workflow and Pasarguard destination.
-- [SysHelper](https://github.com/MeXenon/syshelper) — system dashboard and network-management feature inspiration; its MIT license is retained in `docs/UPSTREAM-SYSHELPER-LICENSE`.
-- [NetOptix](https://github.com/MrAminiDev/NetOptix) — feature inspiration for BBR/Hybla, Swap, ZRAM, MTU, Fail2ban, ClamAV and network maintenance. No NetOptix source code is copied into this release; the uploaded archive did not include a license file.
-- [Paqet Tunnel Manager](https://github.com/behzadea12/Paqet-Tunnel-Manager) — optional official manager integration and DNS/mirror workflow reference.
-- [IranDNSFinder](https://github.com/alinezamifar/IranDNSFinder) — Iranian DNS provider references and resolver-testing concept.
-- [DetectUbuntuMirror](https://github.com/alinezamifar/DetectUbuntuMirror) — regional mirror-selection reference.
-- [Certbot](https://certbot.eff.org/) — ACME certificate issuance and renewal.
-
-## License
-
-SRV Helper is released under the MIT License. See [`LICENSE`](LICENSE).
+These tests cover shell syntax, domain validation, the input-variable regression, SAN argument construction, DNS profiles, mirror selection and menu navigation. They do not replace a real ACME issuance test on a disposable VPS.

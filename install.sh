@@ -4,6 +4,20 @@ set -euo pipefail
 umask 022
 REPO_URL="https://github.com/Amirtn9/srvhelper.git"
 if (( EUID != 0 )); then printf 'Baraye install az sudo estefade konid.\n' >&2; exit 1; fi
+if ! command -v apt-get >/dev/null 2>&1; then
+  printf 'In installer faghat Ubuntu/Debian ba APT ra support mikonad.\n' >&2
+  exit 1
+fi
+missing_packages=()
+command -v curl >/dev/null 2>&1 || missing_packages+=(curl)
+command -v python3 >/dev/null 2>&1 || missing_packages+=(python3)
+command -v ss >/dev/null 2>&1 || missing_packages+=(iproute2)
+dpkg-query -W -f='${Status}' ca-certificates 2>/dev/null | grep -q 'install ok installed' || missing_packages+=(ca-certificates)
+if ((${#missing_packages[@]}>0)); then
+  printf 'Pishniaz ha dar hale nasb hastand: %s\n' "${missing_packages[*]}"
+  DEBIAN_FRONTEND=noninteractive apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing_packages[@]}"
+fi
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 work=''
 src=''
@@ -29,7 +43,7 @@ else
   # When git clones into a known directory, use it as source.
   [[ -d "$work/src" ]] && src="$work/src"
 fi
-for required in srv-helper.sh lib/ui.sh lib/certs.sh lib/mirrors.sh lib/dns.sh lib/system.sh lib/netoptix.sh lib/paqet.sh lib/automation.sh hooks/srv-helper-deploy.sh; do
+for required in srv-helper.sh lib/ui.sh lib/certs.sh lib/mirrors.sh lib/dns.sh lib/system.sh lib/maintenance.sh lib/tunnels.sh lib/automation.sh hooks/srv-helper-deploy.sh; do
   [[ -f "$src/$required" ]] || { printf 'File mojood nist: %s\n' "$required" >&2; exit 1; }
 done
 for shellfile in "$src/srv-helper.sh" "$src/lib/"*.sh "$src/hooks/"*.sh; do bash -n "$shellfile"; done
@@ -51,4 +65,4 @@ WRAPPER
 chmod 755 /usr/local/bin/srv-helper
 install -d -m 755 /etc/letsencrypt/renewal-hooks/deploy
 install -m 750 /opt/srv-helper/hooks/srv-helper-deploy.sh /etc/letsencrypt/renewal-hooks/deploy/srv-helper-deploy
-printf 'SRV Helper v1 nasb shod. Ejra: sudo srv-helper\n'
+printf 'SRV Helper v1.0.0 nasb shod. Ejra: sudo srv-helper\n'

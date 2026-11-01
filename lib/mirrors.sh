@@ -120,7 +120,7 @@ apply_mirror() {
   local new=$1 old='' bdir timestamp file changed os_id family
   need_root && need_cmd python3 && need_cmd apt-get || return 1
   os_id=$(. /etc/os-release 2>/dev/null; printf '%s' "${ID:-unknown}")
-  case "$os_id" in ubuntu) family=ubuntu ;; debian) family=debian ;; *) fail 'Mirror auto faghat Ubuntu/Debian ra support mikonad'; return 1 ;; esac
+  case "$os_id" in ubuntu) family=ubuntu ;; debian) family=debian ;; *) fail 'Mirror auto faghat Ubuntu/Debian ra poshtibani mikonad'; return 1 ;; esac
   [[ "$new" =~ ^https?://[a-zA-Z0-9.-]+(/[a-zA-Z0-9._/-]+)?$ ]] || { fail 'URL namotabar'; return 1; }
   local state='/var/lib/srv-helper/last-mirror'
   [[ -r "$state" ]] && IFS= read -r old < "$state"
@@ -186,26 +186,26 @@ restore_mirror() {
     [[ -f "$file" ]] && cp -a -- "$file" "$original"
   done
   rm -f /var/lib/srv-helper/last-mirror /var/lib/srv-helper/last-apt-backup
-  DEBIAN_FRONTEND=noninteractive apt-get update || warn 'APT update bad az restore error dad'
+  DEBIAN_FRONTEND=noninteractive apt-get update || warn 'APT update bad az restore fail shod'
   success 'Mirror restore shod'
 }
 mirror_menu() {
   local choice region code selected validated family os_id
-  banner; section 'MODIRIAT APT MIRROR HA'
+  banner; section 'MODIRIAT MIRROR HAYE APT'
   os_id=$(. /etc/os-release; printf '%s' "${ID:-unknown}")
   case "$os_id" in
     ubuntu) family=ubuntu ;;
     debian) family=debian ;;
-    *) warn 'Mirror auto faghat Ubuntu/Debian ra support mikonad.'; pause; return ;;
+    *) warn 'Mirror auto faghat Ubuntu/Debian ra poshtibani mikonad.'; pause; return ;;
   esac
   code=$(. /etc/os-release; printf '%s' "${VERSION_CODENAME:-}")
-  [[ -n "$code" ]] || { fail 'OS codename unknown'; pause; return; }
-  menu_line 1 'Iran: test + entekhab behtarin'
+  [[ -n "$code" ]] || { fail 'Codename system tashkhis dade nashod'; pause; return; }
+  menu_line 1 'Iran: test va entekhab behtarin'
   menu_line 2 'Europe: DE / NL / FR / UK'
   menu_line 3 'USA: US / Princeton'
   menu_line 4 'URL mirror delkhah (ba test)'
   menu_line 5 'Bargardandan APT ghabli'
-  menu_line 0 'Back'
+  menu_line 0 'Bargasht'
   prompt 'Entekhab' choice || return
   case "$choice" in
     1) region='iran' ;;
@@ -216,7 +216,7 @@ mirror_menu() {
       [[ "$selected" =~ ^https?://[a-zA-Z0-9.-]+(/[a-zA-Z0-9._/-]+)?$ ]] || { fail 'URL namotabar'; pause; return; }
       if ! validated=$(mirror_probe "${selected%/}" "$code"); then fail 'Mirror Release peyda nashod'; pause; return; fi
       selected=${selected%/}
-      info "Response: ${validated}s"
+      info "Zaman pasokh: ${validated}s"
       ;;
     5) restore_mirror; pause; return ;;
     0) return ;;
@@ -227,10 +227,10 @@ mirror_menu() {
     mapfile -t ranked < <(rank_mirrors "$region" "$code" "$family")
     if ((${#ranked[@]} == 0)); then fail 'Mirror motabar nist'; pause; return; fi
     selected=${ranked[0]}
-    info "Fastest verified: $selected"
-    info 'Probe latency + Release availability ra check mikonad; speed download momken ast motefavet bashad.'
+    info "Mirror ba behtarin pasokh: $selected"
+    info 'Zaman pasokh va mojood boodan Release check mishavad; sorat download momken ast motefavet bashad.'
   fi
-  warn 'APT sources system taghir mikonand. Backup automatic ast.'
-  if confirm "Mirror $selected apply shavad?"; then apply_mirror "$selected"; fi
+  warn 'Source haye APT taghir mikonand. Backup khodkar gerefte mishavad.'
+  if confirm "Mirror $selected set shavad?"; then apply_mirror "$selected"; fi
   pause
 }
