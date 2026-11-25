@@ -2,117 +2,159 @@
 
 ![SRV Helper](assets/srv-helper-banner.png)
 
-**SRV Helper** is a compact, Finglish-first VPS control panel maintained by **AmirTN9**.
+**SRV Helper** پنل ترمینالی برای مدیریت سرور Ubuntu و Debian است. وضعیت CPU، رم و دیسک را در یک نگاه ببینید، گواهی SSL بگیرید و DNS و میرور APT را از روی سرور خودتان بسنجید.
 
+[راهنمای انگلیسی](README_EN.md)
+
+- توسعه‌دهنده: **AmirTN9**
 - GitHub: https://github.com/Amirtn9/srvhelper
-- Version: `1.0.0`
-- Supported systems: Ubuntu and Debian (some tools require systemd)
+- نسخه: `1.0.0`
+- سیستم‌های پشتیبانی‌شده: Ubuntu و Debian
 
-## Main sections
+## داشبورد در یک نگاه
 
-### 1. SSL & Certificates
+```text
+  SRV HELPER  v1.0.0
+  vps01 / debian 13
+  CPU   [####------------]  24%  4 logical CPUs
+  RAM   [########--------]  50%  Memory in use
+  Disk  [###-------------]  19%  Root filesystem
+```
 
-- Single: one domain, one certificate.
-- SAN: 2–25 domains in one certificate.
-- Batch: 1–50 domains, one independent certificate per domain; a domain with unresolved DNS is skipped while the next domain is checked.
-- HTTP-01 Standalone and Webroot validation.
-- Domain normalization, duplicate detection and DNS pre-check.
-- Destination: Pasarguard, `/root/ssl-certs`, or a custom absolute path.
-- Private-key permissions and automatic deployment after successful renewal.
-- Certificate list, inspection and renewal dry-run.
+در **Abzar System → Vaziat server**، برای نمونه‌گیری دوباره `R` و سپس Enter بزنید. درصد CPU از تغییر شمارنده‌های کرنل طی یک نمونهٔ کوتاه به دست می‌آید.
 
-### 2. DNS & Mirrors
+## بخش‌های اصلی
 
-- Iranian DNS profiles, ISP resolvers and international DNS providers.
-- DNS Finder recommends resolvers that answer all three test domains and ranks them by latency. Before applying a profile, it checks each resolver from the server.
-- Regional APT mirrors for Iran, Europe and the USA.
-- Mirror checks require `Release` metadata for the distribution codename and installed APT architecture. Ubuntu on non-x86 architectures uses the official ports archive. APT verifies repository signatures and failed updates trigger rollback.
-- Previous DNS and APT configurations are backed up and can be restored.
+### ۱. SSL و گواهی‌ها
 
-### 3. Smart Setup
+- **Single:** یک دامنه و یک گواهی.
+- **SAN:** دو تا ۲۵ دامنه داخل یک گواهی.
+- **Batch:** برای هر دامنه یک گواهی مستقل؛ حداکثر ۵۰ دامنه. اگر DNS یک دامنه آماده نباشد، آن دامنه رد می‌شود و بررسی دامنه بعدی ادامه پیدا می‌کند.
+- اعتبارسنجی HTTP-01 به روش Standalone یا Webroot.
+- اصلاح حروف بزرگ و کوچک، حذف فاصله‌های ابتدا و انتها و تشخیص دامنه تکراری.
+- بررسی DNS قبل از ارسال درخواست صدور.
+- ذخیره در مسیر Pasarguard، مسیر Root یا مسیر دلخواه.
+- تنظیم دسترسی کلید خصوصی و انتقال مجدد گواهی پس از تمدید خودکار.
+- نمایش گواهی‌ها، بررسی SAN و تست تمدید.
 
-- Detects the server region when the location service is reachable; manual region selection remains available.
-- Tests DNS resolvers and selects working candidates.
-- Tests regional APT mirrors and chooses the fastest valid result.
-- Runs `apt-get update` after mirror selection.
-- Enables BBR only when the running kernel supports it.
-- Prints a final report. Package upgrades are not run automatically.
+### ۲. DNS و میرور
 
-### 4. Server Services & System Tools
+- DNSهای ایرانی، سرویس‌دهنده‌های اینترنت و DNSهای بین‌المللی.
+- تست DNSها و مرتب‌سازی بر اساس پاسخ موفق و زمان پاسخ.
+- میرورهای منطقه‌ای ایران، اروپا و آمریکا.
+- بررسی فایل Release قبل از انتخاب میرور.
+- تهیه نسخه پشتیبان و امکان بازگردانی DNS و APT.
 
-- Tunnel service status, start, stop, restart and logs.
-- Swap and ZRAM management.
-- BBR, Hybla and Cubic TCP profiles.
-- Fail2ban SSH protection and read-only ClamAV scans.
-- Cockpit monitoring installer.
-- Server overview, listening ports, routes, DNS, IPv6, Ping, MTU test and SSH audit.
+### ۳. تنظیم هوشمند سرور
 
-## Install from the GitHub repository
+- تشخیص منطقه سرور در صورت دسترسی به سرویس تشخیص موقعیت IP؛ انتخاب دستی هم وجود دارد.
+- تست DNS و انتخاب گزینه‌های پاسخ‌گو.
+- تست میرورها و انتخاب سریع‌ترین میرور معتبر.
+- اجرای `apt-get update` پس از انتخاب میرور.
+- فعال‌سازی BBR فقط در صورت پشتیبانی کرنل.
+- نمایش گزارش نهایی عملیات. ارتقای خودکار پکیج‌ها انجام نمی‌شود.
+
+### ۴. سرویس‌ها و ابزارهای سرور
+
+- کنترل سرویس‌های تونل: وضعیت، Start، Stop، Restart و Log.
+- مدیریت Swap و ZRAM.
+- پروفایل‌های TCP شامل BBR، Hybla و Cubic.
+- Fail2ban برای محافظت SSH و اسکن فقط‌خواندنی ClamAV.
+- نصب Cockpit برای مانیتورینگ.
+- اطلاعات سرور، پورت‌های باز، Route، DNS، IPv6، Ping، تست MTU و بررسی تنظیمات SSH.
+
+## نصب آسان از GitHub
+
+روی سرور Ubuntu یا Debian، با کاربری که دسترسی `sudo` دارد:
 
 ```bash
-git clone https://github.com/Amirtn9/srvhelper.git
+git clone --depth 1 https://github.com/Amirtn9/srvhelper.git
 cd srvhelper
-sudo bash install.sh
-sudo srv-helper
+sudo bash install.sh --launch
 ```
 
-## Install from a ZIP archive
+نصب‌کننده منبع و مقصد را نشان می‌دهد، برای ادامه تأیید می‌گیرد و پیشرفت را در چهار مرحله نمایش می‌دهد. نصب در `/opt/srv-helper` انجام می‌شود. برای اجرای بعدی روی سرور از `sudo srv-helper` استفاده کنید.
 
-For the release ZIP distributed with this project, transfer it from your computer with `scp` or download it on the VPS:
+| گزینه | کاربرد |
+| --- | --- |
+| `--check` | بررسی پیش‌نیازها و صحت نحوی فایل‌ها بدون اعمال نصب |
+| `--yes` | نصب بدون سؤال برای خودکارسازی |
+| `--launch` | باز کردن منوی برنامه پس از نصب در همان ترمینال |
+
+## اجرای آنلاین از ترمینال
+
+این مسیر به دسترسی HTTPS به GitHub نیاز دارد. فایل نصب‌کننده را دانلود کنید تا بتوانید پیش از اجرا آن را ببینید.
 
 ```bash
-# Optional: run this on your own computer
-scp SRV-Helper-v1.0.0-simple.zip root@SERVER_IP:/root/
-
-# Then connect to the VPS and run:
-cd /root
-unzip SRV-Helper-v1.0.0-simple.zip
-cd SRV-Helper
-sudo bash install.sh
-sudo srv-helper
+installer=$(mktemp -d)
+curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fL \
+  https://raw.githubusercontent.com/Amirtn9/srvhelper/main/install.sh \
+  -o "$installer/install.sh" &&
+  less "$installer/install.sh" &&
+  sudo bash "$installer/install.sh" --launch
 ```
 
-The installer places the application under `/opt/srv-helper` and creates `/usr/local/bin/srv-helper`.
+نصب‌کننده فایل‌های برنامه را از شاخهٔ `main` دریافت می‌کند. برای اجرای مستقیم از یک نسخهٔ مشخص یا بدون نصب سیستمی، آن نسخه را بگیرید و از پوشهٔ پروژه `bash srv-helper.sh` را اجرا کنید. عملیات مدیریتی به دسترسی روت نیاز دارند.
 
-## SSL requirements and troubleshooting
+## نصب روی سرورهای ایران
 
-For a successful HTTP-01 certificate request:
+اگر سرور به GitHub دسترسی دارد، از همان روش نصب آسان استفاده کنید. اگر دانلود روی سرور ناموفق بود، [آرشیو ZIP پروژه](https://github.com/Amirtn9/srvhelper/archive/refs/heads/main.zip) را روی دستگاهی که به GitHub دسترسی دارد بگیرید و با SSH منتقل کنید. در مثال زیر، `USER` و `SERVER_IP` را جایگزین کنید.
 
-1. Enter a hostname such as `pl24.pingyar.com`. If you paste an `http(s)://` URL, the hostname is extracted; IP addresses and custom ports are rejected.
-2. Its public A record must resolve to this VPS. If an AAAA record exists, IPv6 must also reach this VPS; remove an incorrect AAAA record.
-3. TCP port `80` must be reachable from the public internet for Standalone mode.
-4. If a web server already uses port `80`, select Webroot and enter the actual document root for that hostname.
-5. If a CDN or proxy is enabled, ensure `/.well-known/acme-challenge/` is forwarded to this server.
+```bash
+scp srvhelper-main.zip USER@SERVER_IP:~/
+ssh USER@SERVER_IP
+```
 
-Ports such as `3104`–`3110` do not conflict with HTTP-01 by themselves. The relevant port is TCP `80`.
+سپس روی سرور اجرا کنید:
 
-Wildcard certificates are not issued by the HTTP-01 flow; they require DNS-01 validation.
+```bash
+unzip srvhelper-main.zip
+cd srvhelper-main
+bash install.sh --check
+sudo bash install.sh --launch
+```
 
-## Navigation
+در این روش فایل‌های برنامه از همان پوشه خوانده می‌شوند. اگر `unzip` روی سرور موجود نیست، ابتدا آرشیو را روی دستگاه خود باز کنید و پوشه را با `scp -r` منتقل کنید. اگر گزارش نصب نشان می‌دهد بسته‌ای کم است، ابتدا با APT سرور آن را نصب کنید. دسترسی به مخازن بسته‌های Ubuntu یا Debian برای نصب بسته‌های جاافتاده لازم است، حتی اگر فایل‌های برنامه را با SCP منتقل کرده باشید.
 
-- Use Up/Down to highlight a menu item and Enter to open it. You can also type its number and press Enter.
-- Press Esc to go back or Q to exit in keyboard menus. Text prompts accept `back` and `exit`.
-- Set `SRV_PLAIN_MENU=1` for line-based menus. Piped input uses numbered menus automatically.
+پس از نصب، از **Shabake → DNS** یا **Mirror** می‌توانید گزینه‌های ایران را از روی خود سرور آزمایش کنید. در Ubuntu روی معماری‌های غیر x86، انتخاب خودکار APT از آرشیو رسمی Ports استفاده می‌کند. پیش از اعمال تغییرات شبکه، دسترسی کنسول میزبان را آماده نگه دارید.
 
-## Safety
+## راهنمای رفع مشکل صدور SSL
 
-- System changes require root and confirmation.
-- DNS and APT source changes create backups; failed APT updates trigger rollback.
-- DNS changes use `systemd-resolved`; systems without an active `systemd-resolved` service are not modified.
-- Firewall-wide blocking rules and automatic package upgrades are intentionally excluded from Smart Setup.
-- Always keep an out-of-band console available before changing network settings on a remote VPS.
+برای صدور گواهی با روش HTTP-01:
 
-## Tests
+۱. دامنه را به شکل `pl24.pingyar.com` وارد کنید. اگر آدرس کامل `http(s)://` وارد شود، نام دامنه از آن استخراج می‌شود؛ IP و پورت دلخواه پذیرفته نمی‌شوند.
 
-Run the offline checks with:
+۲. رکورد عمومی A باید به IP همین VPS اشاره کند. اگر رکورد AAAA دارید، IPv6 آن هم باید به همین سرور برسد؛ در غیر این صورت AAAA اشتباه را اصلاح یا حذف کنید.
+
+۳. پورت TCP شماره ۸۰ باید از اینترنت قابل دسترسی باشد.
+
+۴. اگر وب‌سرور از پورت ۸۰ استفاده می‌کند، روش Webroot را انتخاب و مسیر واقعی ریشه سایت همان دامنه را وارد کنید.
+
+۵. اگر CDN یا Proxy فعال است، مسیر `/.well-known/acme-challenge/` باید به سرور منتقل شود.
+
+پورت‌های ۳۱۰۴ تا ۳۱۱۰ به‌تنهایی با صدور HTTP-01 تداخل ندارند؛ پورت مهم برای این روش، TCP شماره ۸۰ است.
+
+گواهی Wildcard با روش HTTP-01 صادر نمی‌شود و به اعتبارسنجی DNS-01 نیاز دارد.
+
+## کلیدهای بازگشت و خروج
+
+- در منوهای تعاملی با کلیدهای بالا و پایین گزینه را مشخص کنید و Enter بزنید. شمارهٔ گزینه را هم می‌توانید وارد کنید و Enter بزنید.
+- در این منوها Esc به منوی قبلی برمی‌گردد و Q برنامه را می‌بندد. در ورودی‌های متنی از `back` و `exit` استفاده کنید.
+- برای استفاده از منوی خطی، برنامه را با `SRV_PLAIN_MENU=1` اجرا کنید. ورودی پایپ‌شده به‌صورت خودکار از منوی شماره‌ای استفاده می‌کند.
+- منوهای برنامه فینگلیش و پیام‌های نصب‌کننده فارسی هستند.
+
+## نکات ایمنی
+
+- تغییرات سیستمی به دسترسی Root و تأیید کاربر نیاز دارند.
+- قبل از تغییر DNS و APT نسخه پشتیبان ساخته می‌شود و در صورت شکست APT Update، تنظیمات قبلی بازمی‌گردند.
+- تغییر DNS فقط روی سیستم دارای `systemd-resolved` فعال انجام می‌شود.
+- Smart Setup پکیج‌ها را به‌صورت خودکار Upgrade نمی‌کند.
+- پیش از تغییر تنظیمات شبکه VPS ریموت، دسترسی کنسول خارج از SSH را حفظ کنید.
+
+## اجرای تست‌ها
 
 ```bash
 bash tests/test.sh
 ```
 
-These tests cover shell syntax, domain validation, the input-variable regression, SAN argument construction, DNS profiles, mirror selection and menu navigation. They do not replace a real ACME issuance test on a disposable VPS.
-
-
-## Project references
-
-The regional resolver benchmarking and mirror selection workflows draw on [IranDNSFinder](https://github.com/alinezamifar/IranDNSFinder) and [DetectUbuntuMirror](https://github.com/alinezamifar/DetectUbuntuMirror). SRV Helper implements its own checks and measures reachability from the server where it runs.
+تست‌ها سینتکس، اعتبارسنجی دامنه، ایراد دریافت ورودی، آرگومان‌های SAN، DNS، میرورها و منوها را بررسی می‌کنند. صدور واقعی گواهی باید جداگانه روی یک VPS آزمایشی انجام شود.

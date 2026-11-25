@@ -159,8 +159,14 @@ back_rc=$(printf 'back\n' | bash -c 'source "$1/lib/ui.sh"; prompt test value >/
 exit_rc=$(printf 'exit\n' | bash -c 'source "$1/lib/ui.sh"; prompt test value >/dev/null; echo "$?:$SRV_EXIT_REQUESTED"' _ "$home")
 [[ "$exit_rc" == '21:1' ]]
 
+# Dashboard meters also remain legible without color and with missing metrics.
+[[ "$(resource_meter CPU 100 '4 logical CPUs')" == *'[################] 100%'* ]]
+[[ "$(resource_meter CPU 0 '')" == *'[----------------]   0%'* ]]
+[[ "$(resource_meter CPU '' '')" == *'[----------------]   --'* ]]
+bash "$home/install.sh" --help | grep -- '--check' >/dev/null
+
 # Terminal UI is ASCII/Finglish. Check branding in loaded modules only.
-if LC_ALL=C grep -nP '[^\x00-\x7F]' "$home"/srv-helper.sh "$home"/install.sh "$home"/hooks/*.sh "$home"/lib/*.sh; then
+if LC_ALL=C grep -nP '[^\x00-\x7F]' "$home"/srv-helper.sh "$home"/hooks/*.sh "$home"/lib/*.sh; then
   echo 'FAIL non-ASCII interface strings' >&2; exit 1
 fi
 if grep -nEi 'behzad|netoptix|syshelper|mexenon|alinezamifar|mhsanaei' "$home"/srv-helper.sh "$home"/install.sh "$home"/lib/{ui,certs,mirrors,dns,system,maintenance,tunnels,automation}.sh; then

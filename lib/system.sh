@@ -4,33 +4,76 @@ os_label() {
   else uname -s; fi
 }
 
+cpu_usage() {
+  local before after
+  before=$(awk '/^cpu / {print; exit}' /proc/stat 2>/dev/null) || return 1
+  sleep 0.2
+  after=$(awk '/^cpu / {print; exit}' /proc/stat 2>/dev/null) || return 1
+  awk -v before="$before" -v after="$after" '
+    BEGIN {
+      if (split(before, a) < 5 || split(after, b) < 5) exit 1
+      for (i = 2; i <= 9; i++) total += b[i] - a[i]
+      idle = b[5] - a[5] + b[6] - a[6]
+      if (total <= 0 || idle < 0 || idle > total) exit 1
+      printf "%.0f", 100 * (total - idle) / total
+    }'
+}
+
+resource_meter() {
+  local label=$1 percent=$2 detail=$3
+  local width=16 filled=0 color=$OK bar percent_label=' --' i
+  if [[ "$percent" =~ ^([0-9]{1,2}|100)$ ]]; then
+    filled=$(((10#$percent * width + 50) / 100))
+    printf -v percent_label '%3d%%' "$((10#$percent))"
+    if ((10#$percent >= 90)); then color=$BAD
+    elif ((10#$percent >= 75)); then color=$WARN
+    fi
+  fi
+  bar=''
+  for ((i=0; i<width; i++)); do
+    if ((i<filled)); then bar+='#'; else bar+='-'; fi
+  done
+  printf '  %-5s [%s%s%s] %4s  %s\n' "$label" "$color" "$bar" "$RESET" "$percent_label" "$detail"
+}
+
 quick_status() {
-  local os host cpu ram disk uptime_line
-  os=$(os_label); host=$(hostname 2>/dev/null || echo unknown)
-  cpu=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo '?')
-  ram=$(free -h 2>/dev/null | awk 'NR==2 {print $3 "/" $2}')
-  disk=$(df -h / 2>/dev/null | awk 'NR==2 {print $5}')
-  uptime_line=$(uptime -p 2>/dev/null || echo unknown)
-  printf '  %s%s  /  %s%s\n  CPU: %s  |  RAM: %s  |  Disk: %s  |  Uptime: %s\n' \
-    "$DIM" "$host" "$os" "$RESET" "$cpu" "${ram:-?}" "${disk:-?}" "$uptime_line"
+  local os host cores cpu ram disk uptime_line
+  os=$(os_label); host=$(hostname 2>/dev/null || printf unknown)
+  cores=$(getconf _NPROCESSORS_ONLN 2>/dev/null || printf '?')
+  cpu=$(cpu_usage) || cpu=''
+  ram=$(awk '
+    /^MemTotal:/ {total = $2}
+    /^MemAvailable:/ {available = $2; found = 1}
+    END {if (total > 0 && found && available <= total) printf "%.0f", 100 * (total - available) / total}
+  ' /proc/meminfo 2>/dev/null) || ram=''
+  disk=$(LC_ALL=C df -P / 2>/dev/null | awk 'NR==2 {sub(/%$/, "", $5); print $5}') || disk=''
+  uptime_line=$(uptime -p 2>/dev/null || printf unknown)
+  printf '  %s%s / %s%s\n' "$DIM" "$host" "$os" "$RESET"
+  resource_meter CPU "$cpu" "$cores logical CPUs"
+  resource_meter RAM "$ram" 'Memory in use'
+  resource_meter 'Disk' "$disk" 'Root filesystem'
+  printf '  Uptime: %s\n' "$uptime_line"
 }
 
 system_overview() {
-  banner; section 'VASIAT SERVER'
-  printf '  OS        : %s\n' "$(os_label)"
-  printf '  Name server: %s\n' "$(hostname)"
-  printf '  Kernel    : %s\n' "$(uname -r)"
-  printf '  Haste CPU : %s\n' "$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo unknown)"
-  printf '  Moddat faaliat: %s\n' "$(uptime -p 2>/dev/null || uptime)"
-  printf '  Load      : %s\n' "$(awk '{print $1,$2,$3}' /proc/loadavg 2>/dev/null)"
-  if command -v free >/dev/null; then free -h | awk 'NR==2 {printf "  RAM       : %s used / %s total\n", $3, $2}'; fi
-  df -h / | awk 'NR==2 {printf "  Disk /    : %s used / %s total (%s)\n", $3, $2, $5}'
-  if command -v ip >/dev/null; then ip -brief -4 addr show scope global 2>/dev/null | head -6; fi
-  printf '  IPv6      : %s\n' "$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null || echo unknown) (1=disabled)"
-  printf '  Ping      : %s\n' "$(sysctl -n net.ipv4.icmp_echo_ignore_all 2>/dev/null || echo unknown) (1=ignored)"
-  if systemctl list-unit-files certbot.timer >/dev/null 2>&1; then
-    printf '  Certbot   : %s\n' "$(systemctl is-enabled certbot.timer 2>/dev/null || echo unknown)"
-  fi
+  local action
+  while :; do
+    banner; section 'VASIAT SERVER'
+    quick_status
+    printf '\n  Kernel    : %s\n' "$(uname -r)"
+    printf '  Load      : %s\n' "$(awk '{print $1,$2,$3}' /proc/loadavg 2>/dev/null)"
+    if command -v free >/dev/null; then free -h | awk 'NR==2 {printf "  RAM       : %s available / %s total\n", $7, $2}'; fi
+    df -h / | awk 'NR==2 {printf "  Disk /    : %s used / %s total (%s)\n", $3, $2, $5}'
+    if command -v ip >/dev/null; then ip -brief -4 addr show scope global 2>/dev/null | head -6; fi
+    printf '  IPv6      : %s\n' "$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null || echo unknown) (1=disabled)"
+    printf '  Ping      : %s\n' "$(sysctl -n net.ipv4.icmp_echo_ignore_all 2>/dev/null || echo unknown) (1=ignored)"
+    if systemctl list-unit-files certbot.timer >/dev/null 2>&1; then
+      printf '  Certbot   : %s\n' "$(systemctl is-enabled certbot.timer 2>/dev/null || echo unknown)"
+    fi
+    [[ -t 0 && -t 1 ]] || return 0
+    prompt 'R = refresh | Enter = bargasht' action || return 0
+    [[ "${action,,}" == r ]] || return 0
+  done
 }
 network_status() {
   banner; section 'BARRASI SHABAKE'
@@ -107,7 +150,7 @@ system_menu() {
     if ((rc==20)); then SRV_BACK_REQUESTED=0; return; fi
     ((rc==0)) || return "$rc"
     case "$choice" in
-      1) system_overview; pause ;;
+      1) system_overview ;;
       2) network_status; pause ;;
       3) network_menu ;;
       4) mtu_finder; pause ;;
