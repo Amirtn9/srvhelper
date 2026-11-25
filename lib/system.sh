@@ -73,14 +73,13 @@ reset_sysctl() {
 network_menu() {
   local choice
   while :; do
-    banner; section 'MODIRIAT SHABAKE'
-    menu_line 1 'Gheyre faal kardan IPv6 (paydar)'
-    menu_line 2 'Faal kardan IPv6 (paydar)'
-    menu_line 3 'Masdood kardan pasokh Ping'
-    menu_line 4 'Baz kardan pasokh Ping'
-    menu_line 5 'Reset tanzimat sysctl'
-    menu_line 0 'Bargasht'
-    prompt 'Entekhab' choice || return
+    choose_menu choice 'MODIRIAT SHABAKE' '' \
+      1 'Gheyre faal kardan IPv6 (paydar)' \
+      2 'Faal kardan IPv6 (paydar)' \
+      3 'Masdood kardan pasokh Ping' \
+      4 'Baz kardan pasokh Ping' \
+      5 'Reset tanzimat sysctl' \
+      0 'Bargasht' || return
     case "$choice" in
       1) set_sysctl_option net.ipv6.conf.all.disable_ipv6 1 ;;
       2) set_sysctl_option net.ipv6.conf.all.disable_ipv6 0 ;;
@@ -97,15 +96,14 @@ system_menu() {
   local choice rc
   while :; do
     [[ ${SRV_EXIT_REQUESTED:-0} == 1 ]] && return
-    banner; section 'ABZAR SYSTEM'
-    menu_line 1 'Vaziat server (CPU / RAM / Disk / moddat faaliat)'
-    menu_line 2 'Vaziat shabake (port / route / DNS)'
-    menu_line 3 'Tanzimat IPv6 va Ping'
-    menu_line 4 'Test MTU (faghat khanadani)'
-    menu_line 5 'Barrasi amniat SSH'
-    menu_line 6 'Ezafe kardan port SSH ba amniat'
-    menu_line 0 'Bargasht'
-    prompt 'Entekhab' choice; rc=$?
+    choose_menu choice 'ABZAR SYSTEM' '' \
+      1 'Vaziat server (CPU / RAM / Disk / moddat faaliat)' \
+      2 'Vaziat shabake (port / route / DNS)' \
+      3 'Tanzimat IPv6 va Ping' \
+      4 'Test MTU (faghat khanadani)' \
+      5 'Barrasi amniat SSH' \
+      6 'Ezafe kardan port SSH ba amniat' \
+      0 'Bargasht'; rc=$?
     if ((rc==20)); then SRV_BACK_REQUESTED=0; return; fi
     ((rc==0)) || return "$rc"
     case "$choice" in

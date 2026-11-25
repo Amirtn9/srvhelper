@@ -13,12 +13,11 @@ network_tools_menu() {
   local choice rc
   while :; do
     [[ ${SRV_EXIT_REQUESTED:-0} == 1 ]] && return
-    banner; section 'DNS VA MIRROR'
-    menu_line 1 'Modiriat DNS (Iran / Jahani / Finder)'
-    menu_line 2 'Modiriat Mirror (Iran / Europe / USA)'
-    menu_line 3 'Tanzim Hoshmand (DNS + Mirror + Update + BBR)'
-    menu_line 0 'Bargasht'
-    prompt 'Entekhab' choice; rc=$?
+    choose_menu choice 'DNS VA MIRROR' '' \
+      1 'Modiriat DNS (Iran / Jahani / Finder)' \
+      2 'Modiriat Mirror (Iran / Europe / USA)' \
+      3 'Tanzim Hoshmand (DNS + Mirror + Update + BBR)' \
+      0 'Bargasht'; rc=$?
     if ((rc==20)); then SRV_BACK_REQUESTED=0; return; fi
     ((rc==0)) || return "$rc"
     case "$choice" in
@@ -37,16 +36,12 @@ main_menu() {
   local opt rc
   while :; do
     [[ ${SRV_EXIT_REQUESTED:-0} == 1 ]] && return 0
-    banner
-    quick_status
-    section 'MENU ASLI'
-    menu_line 1 'Modiriat SSL va Certificate'
-    menu_line 2 'Shabake: DNS va Mirror APT'
-    menu_line 3 'Khadamat Server'
-    menu_line 4 'Abzar System'
-    menu_line 0 'Khorooj'
-    printf '\n%b\n' "${DIM}  back = menu ghabli  |  exit = khorooj${RESET}"
-    prompt 'Entekhab' opt; rc=$?
+    choose_menu opt 'MENU ASLI' "$(quick_status)" \
+      1 'Modiriat SSL va Certificate' \
+      2 'Shabake: DNS va Mirror APT' \
+      3 'Khadamat Server' \
+      4 'Abzar System' \
+      0 'Khorooj'; rc=$?
     if ((rc==20)); then SRV_BACK_REQUESTED=0; continue; fi
     ((rc==0)) || return 0
     case "$opt" in

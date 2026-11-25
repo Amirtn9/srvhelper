@@ -105,15 +105,14 @@ zram_remove() {
 resource_menu() {
   local choice
   while :; do
-    banner; section 'MODIRIAT RAM | SWAP + ZRAM'
-    menu_line 1 'Namayesh vaziat Swap'
-    menu_line 2 'Sakht file Swap'
-    menu_line 3 'Hazf file Swap'
-    menu_line 4 'Namayesh vaziat ZRAM'
-    menu_line 5 'Sakht ZRAM paydar'
-    menu_line 6 'Hazf ZRAM'
-    menu_line 0 'Bargasht'
-    prompt 'Entekhab' choice || return
+    choose_menu choice 'MODIRIAT RAM | SWAP + ZRAM' '' \
+      1 'Namayesh vaziat Swap' \
+      2 'Sakht file Swap' \
+      3 'Hazf file Swap' \
+      4 'Namayesh vaziat ZRAM' \
+      5 'Sakht ZRAM paydar' \
+      6 'Hazf ZRAM' \
+      0 'Bargasht' || return
     case "$choice" in
       1) swap_status; pause ;;
       2) swap_create; pause ;;
@@ -177,13 +176,12 @@ fail2ban_disable() {
 fail2ban_menu() {
   local choice
   while :; do
-    banner; section 'HIFAZAT SSH | FAIL2BAN'
-    menu_line 1 'Nasb va faalsazi SSH jail'
-    menu_line 2 'Namayesh vaziat Fail2ban'
-    menu_line 3 'Gheyre faal kardan Fail2ban'
-    menu_line 4 'Namayesh vaziat SSH jail'
-    menu_line 0 'Bargasht'
-    prompt 'Entekhab' choice || return
+    choose_menu choice 'HIFAZAT SSH | FAIL2BAN' '' \
+      1 'Nasb va faalsazi SSH jail' \
+      2 'Namayesh vaziat Fail2ban' \
+      3 'Gheyre faal kardan Fail2ban' \
+      4 'Namayesh vaziat SSH jail' \
+      0 'Bargasht' || return
     case "$choice" in
       1) fail2ban_enable; pause ;;
       2) fail2ban_status; pause ;;
@@ -218,12 +216,11 @@ clamav_scan() {
 clamav_menu() {
   local choice
   while :; do
-    banner; section 'SCAN FILE | CLAMAV'
-    menu_line 1 'Nasb ClamAV + update signature ha'
-    menu_line 2 'Scan faghat khanadani rooye masir'
-    menu_line 3 'Namayesh vaziat ClamAV'
-    menu_line 0 'Bargasht'
-    prompt 'Entekhab' choice || return
+    choose_menu choice 'SCAN FILE | CLAMAV' '' \
+      1 'Nasb ClamAV + update signature ha' \
+      2 'Scan faghat khanadani rooye masir' \
+      3 'Namayesh vaziat ClamAV' \
+      0 'Bargasht' || return
     case "$choice" in
       1) clamav_install; pause ;;
       2) clamav_scan; pause ;;
@@ -300,15 +297,14 @@ server_services_menu() {
   local choice rc
   while :; do
     [[ ${SRV_EXIT_REQUESTED:-0} == 1 ]] && return
-    banner; section 'KHADAMAT SERVER'
-    menu_line 1 'Modiriat service haye tunnel'
-    menu_line 2 'Modiriat RAM (Swap / ZRAM)'
-    menu_line 3 'Tanzim TCP (BBR / Hybla / Cubic)'
-    menu_line 4 'Hifazat SSH (Fail2ban)'
-    menu_line 5 'Scan malware (ClamAV)'
-    menu_line 6 'Monitor server (Cockpit)'
-    menu_line 0 'Bargasht'
-    prompt 'Entekhab' choice; rc=$?
+    choose_menu choice 'KHADAMAT SERVER' '' \
+      1 'Modiriat service haye tunnel' \
+      2 'Modiriat RAM (Swap / ZRAM)' \
+      3 'Tanzim TCP (BBR / Hybla / Cubic)' \
+      4 'Hifazat SSH (Fail2ban)' \
+      5 'Scan malware (ClamAV)' \
+      6 'Monitor server (Cockpit)' \
+      0 'Bargasht'; rc=$?
     if ((rc==20)); then SRV_BACK_REQUESTED=0; return; fi
     ((rc==0)) || return "$rc"
     case "$choice" in

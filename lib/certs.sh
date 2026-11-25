@@ -405,13 +405,12 @@ ssl_menu() {
   local choice rc
   while :; do
     [[ ${SRV_EXIT_REQUESTED:-0} == 1 ]] && return
-    banner; section 'MODIRIAT SSL'
-    menu_line 1 'Dasti   | Yek domain, yek certificate'
-    menu_line 2 'SAN     | Chand domain, yek certificate'
-    menu_line 3 'Batch   | Har domain, yek certificate joda'
-    menu_line 4 'Vaziat  | Namayesh / barrasi / test tamdid'
-    menu_line 0 'Bargasht'
-    prompt 'Entekhab' choice; rc=$?
+    choose_menu choice 'MODIRIAT SSL' '' \
+      1 'Dasti   | Yek domain, yek certificate' \
+      2 'SAN     | Chand domain, yek certificate' \
+      3 'Batch   | Har domain, yek certificate joda' \
+      4 'Vaziat  | Namayesh / barrasi / test tamdid' \
+      0 'Bargasht'; rc=$?
     if ((rc==20)); then SRV_BACK_REQUESTED=0; return; fi
     if ((rc!=0)); then return; fi
     case "$choice" in

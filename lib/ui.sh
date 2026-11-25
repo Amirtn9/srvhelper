@@ -46,6 +46,89 @@ prompt() {
   printf -v "$destination" '%s' "$_srv_prompt_value"
 }
 
+choose_menu() {
+  local _menu_destination=$1 _menu_title=$2 _menu_summary=$3
+  shift 3
+  local -a _menu_ids=() _menu_labels=()
+  while (($# >= 2)); do
+    _menu_ids+=("$1")
+    _menu_labels+=("$2")
+    shift 2
+  done
+  local _menu_size=${#_menu_ids[@]} _menu_row=0 _menu_index _menu_key _menu_sequence
+  local _menu_keyboard=0 _menu_number= _menu_candidate
+  if [[ -t 0 && -t 1 && ${TERM:-dumb} != dumb && -z ${NO_CLEAR:-} && -z ${SRV_PLAIN_MENU:-} ]]; then
+    _menu_keyboard=1
+  fi
+
+  while :; do
+    banner
+    if [[ -n "$_menu_summary" ]]; then printf '%s\n' "$_menu_summary"; fi
+    section "$_menu_title"
+    for ((_menu_index=0; _menu_index<_menu_size; _menu_index++)); do
+      if ((_menu_keyboard && _menu_index == _menu_row)); then
+        printf '  %s>%s %2s  %s%s%s\n' "$C1" "$RESET" "${_menu_ids[_menu_index]}" "$WHITE" "${_menu_labels[_menu_index]}" "$RESET"
+      else
+        printf '  %s%4s%s  %s\n' "$C1" "${_menu_ids[_menu_index]}" "$RESET" "${_menu_labels[_menu_index]}"
+      fi
+    done
+    if ((!_menu_keyboard)); then
+      printf '\n  %sback = menu ghabli | exit = khorooj%s\n' "$DIM" "$RESET"
+      prompt 'Entekhab' "$_menu_destination"
+      return $?
+    fi
+
+    printf '\n  %sUp/Down | Enter | 0-9 | Esc: back | Q: exit%s\n' "$DIM" "$RESET"
+    while IFS= read -rsn1 _menu_key; do
+      case "$_menu_key" in
+        ''|$'\r')
+          printf -v "$_menu_destination" '%s' "${_menu_ids[_menu_row]}"
+          return 0
+          ;;
+        q|Q)
+          SRV_EXIT_REQUESTED=1
+          return 21
+          ;;
+        b|B|$'\177'|$'\b')
+          SRV_BACK_REQUESTED=1
+          return 20
+          ;;
+        $'\033')
+          _menu_number=''
+          if ! IFS= read -rsn1 -t 0.25 _menu_sequence; then
+            SRV_BACK_REQUESTED=1
+            return 20
+          fi
+          case "$_menu_sequence" in
+            '['|O)
+              # Consume the sequence through its final byte. Cursor keys can
+              # carry modifier parameters, such as ESC [ 1 ; 5 A.
+              while IFS= read -rsn1 -t 0.25 _menu_sequence; do
+                case "$_menu_sequence" in
+                  A) _menu_row=$(((_menu_row + _menu_size - 1) % _menu_size)); break 2 ;;
+                  B) _menu_row=$(((_menu_row + 1) % _menu_size)); break 2 ;;
+                  [a-zA-Z~]) break ;;
+                esac
+              done
+              ;;
+          esac
+          ;;
+        [0-9])
+          for _menu_candidate in "${_menu_number}$_menu_key" "$_menu_key"; do
+            for ((_menu_index=0; _menu_index<_menu_size; _menu_index++)); do
+              if [[ "${_menu_ids[_menu_index]}" == "$_menu_candidate" ]]; then
+                _menu_number=$_menu_candidate
+                _menu_row=$_menu_index
+                break 3
+              fi
+            done
+          done
+          ;;
+      esac
+    done || return 1
+  done
+}
+
 pause() {
   [[ ${SRV_BACK_REQUESTED:-0} == 1 || ${SRV_EXIT_REQUESTED:-0} == 1 ]] && return 0
   [[ -t 0 ]] || return 0

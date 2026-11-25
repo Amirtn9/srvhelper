@@ -220,7 +220,6 @@ restore_mirror() {
 }
 mirror_menu() {
   local choice region code selected validated family os_id
-  banner; section 'MODIRIAT MIRROR HAYE APT'
   os_id=$(. /etc/os-release; printf '%s' "${ID:-unknown}")
   case "$os_id" in
     ubuntu) family=ubuntu ;;
@@ -229,13 +228,13 @@ mirror_menu() {
   esac
   code=$(. /etc/os-release; printf '%s' "${VERSION_CODENAME:-}")
   [[ -n "$code" ]] || { fail 'Codename system tashkhis dade nashod'; pause; return; }
-  menu_line 1 'Iran: test va entekhab behtarin'
-  menu_line 2 'Europe: DE / NL / FR / UK'
-  menu_line 3 'USA: US / Princeton'
-  menu_line 4 'URL mirror delkhah (ba test)'
-  menu_line 5 'Bargardandan APT ghabli'
-  menu_line 0 'Bargasht'
-  prompt 'Entekhab' choice || return
+  choose_menu choice 'MODIRIAT MIRROR HAYE APT' '' \
+    1 'Iran: test va entekhab behtarin' \
+    2 'Europe: DE / NL / FR / UK' \
+    3 'USA: US / Princeton' \
+    4 'URL mirror delkhah (ba test)' \
+    5 'Bargardandan APT ghabli' \
+    0 'Bargasht' || return
   case "$choice" in
     1) region='iran' ;;
     2) region='europe' ;;

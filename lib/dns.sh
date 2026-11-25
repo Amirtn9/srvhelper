@@ -211,30 +211,17 @@ dns_finder_menu() {
 dns_profile_group_menu() {
   local group=$1 choice profile servers rc
   while :; do
-    banner
     if [[ "$group" == iran ]]; then
-      section 'DNS IRAN'
-      menu_line 1 'Shecan'
-      menu_line 2 'Radar'
-      menu_line 3 '403'
-      menu_line 4 'Electro'
-      menu_line 5 'Begzar'
-      menu_line 6 'Shatel'
-      menu_line 7 'Shelter'
-      menu_line 8 'Beshkan'
-      menu_line 9 'TIC / Mokhaberat'
-      menu_line 10 'Pishgaman'
-      menu_line 11 'Asiatech'
+      choose_menu choice 'DNS IRAN' '' \
+        1 'Shecan' 2 'Radar' 3 '403' 4 'Electro' 5 'Begzar' \
+        6 'Shatel' 7 'Shelter' 8 'Beshkan' 9 'TIC / Mokhaberat' \
+        10 'Pishgaman' 11 'Asiatech' 0 'Bargasht'
+      rc=$?
     else
-      section 'DNS JAHANI'
-      menu_line 1 'Cloudflare'
-      menu_line 2 'Google'
-      menu_line 3 'Quad9'
-      menu_line 4 'OpenDNS'
-      menu_line 5 'AdGuard'
+      choose_menu choice 'DNS JAHANI' '' \
+        1 'Cloudflare' 2 'Google' 3 'Quad9' 4 'OpenDNS' 5 'AdGuard' 0 'Bargasht'
+      rc=$?
     fi
-    menu_line 0 'Bargasht'
-    prompt 'Entekhab' choice; rc=$?
     if ((rc==20)); then SRV_BACK_REQUESTED=0; return 0; fi
     ((rc==0)) || return "$rc"
     if [[ "$choice" == 0 ]]; then return 0; fi
@@ -267,14 +254,13 @@ dns_menu() {
   local choice rc
   while :; do
     [[ ${SRV_EXIT_REQUESTED:-0} == 1 ]] && return
-    banner; section 'MODIRIAT DNS'
-    menu_line 1 'DNS haye Iran'
-    menu_line 2 'DNS haye Jahani'
-    menu_line 3 'Peyda kardan behtarin DNS'
-    menu_line 4 'Vaziat DNS feli'
-    menu_line 5 'Bazgasht DNS ghabli'
-    menu_line 0 'Bargasht'
-    prompt 'Entekhab' choice; rc=$?
+    choose_menu choice 'MODIRIAT DNS' '' \
+      1 'DNS haye Iran' \
+      2 'DNS haye Jahani' \
+      3 'Peyda kardan behtarin DNS' \
+      4 'Vaziat DNS feli' \
+      5 'Bazgasht DNS ghabli' \
+      0 'Bargasht'; rc=$?
     if ((rc==20)); then SRV_BACK_REQUESTED=0; return; fi
     ((rc==0)) || return "$rc"
     case "$choice" in

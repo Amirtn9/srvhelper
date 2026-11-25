@@ -90,9 +90,9 @@ Wildcard certificates are not issued by the HTTP-01 flow; they require DNS-01 va
 
 ## Navigation
 
-- Type `back` at a prompt to return to the previous menu.
-- Type `exit` to close the application.
-- Menu text is Finglish/ASCII.
+- Use Up/Down to highlight a menu item and Enter to open it. You can also type its number and press Enter.
+- Press Esc to go back or Q to exit in keyboard menus. Text prompts accept `back` and `exit`.
+- Set `SRV_PLAIN_MENU=1` for line-based menus. Piped input uses numbered menus automatically.
 
 ## Safety
 
