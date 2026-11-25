@@ -64,52 +64,61 @@ apply_dns() {
     return 1
   fi
   command -v resolvectl >/dev/null || { fail 'resolvectl peyda nashod'; return 1; }
-  local dns_re='^[0-9a-fA-F:. ]+$'
-  [[ "$servers" =~ $dns_re ]] || { fail 'DNS address ha namotabar hastand'; return 1; }
+  local server
+  local -a addresses
+  [[ "$servers" =~ ^[0-9a-fA-F:.]+(\ [0-9a-fA-F:.]+)*$ ]] || { fail 'DNS address ha namotabar hastand'; return 1; }
+  read -r -a addresses <<< "$servers"
+  need_cmd python3 || return 1
+  python3 -c 'import ipaddress, sys; [ipaddress.ip_address(address) for address in sys.argv[1:]]' "${addresses[@]}" 2>/dev/null ||
+    { fail 'DNS address ha namotabar hastand'; return 1; }
   info "Profile DNS: $profile ($servers)"
-  if command -v dig >/dev/null 2>&1; then
-    local primary=${servers%% *}
-    info "Test dastresi DNS: $primary"
-    if ! dig +time=2 +tries=1 +short "@$primary" example.com A 2>/dev/null | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
-      warn 'DNS probe javab nadad. In DNS momken ast az network shoma ghabele dastres nabashad.'
-      if [[ ${SRV_AUTO_MODE:-0} == 1 ]]; then return 1; fi
-      confirm 'Ba vojood DNS probe fail edame midahid?' || return 1
+  ensure_dig || return 1
+  for server in "${addresses[@]}"; do
+    info "Test dastresi DNS: $server"
+    if ! dig -r +time=2 +tries=1 +short "@$server" example.com A 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' >/dev/null; then
+      fail "DNS pasokh nadad: $server"
+      return 1
     fi
-  else warn 'dig nasb nist; DNS probe external anjam nashod.'; fi
+  done
   warn 'Taghir DNS momken ast session SSH / network ra mokhtal konad.'
   if [[ ${SRV_AUTO_MODE:-0} != 1 ]]; then confirm 'DNS system taghir konad?' || return 1; fi
-  install -d -m 755 /etc/systemd/resolved.conf.d
-  install -d -m 700 "$(backup_dir)/dns"
+  install -d -m 755 /etc/systemd/resolved.conf.d || return 1
+  install -d -m 700 "$(backup_dir)/dns" || return 1
   if [[ -f "$target" ]]; then
-    cp -a "$target" "$(backup_dir)/dns/previous.conf"
-    printf 'existing\n' > "$(backup_dir)/dns/previous.type"
+    cp -a "$target" "$(backup_dir)/dns/previous.conf" || return 1
+    printf 'existing\n' > "$(backup_dir)/dns/previous.type" || return 1
   else
-    printf 'none\n' > "$(backup_dir)/dns/previous.type"
+    printf 'none\n' > "$(backup_dir)/dns/previous.type" || return 1
     rm -f "$(backup_dir)/dns/previous.conf"
   fi
-  cat > "$target" <<EOF2
+  if cat > "$target" <<EOF2
 # Managed by SRV Helper. Remove/restore from menu to return to previous resolver.
 [Resolve]
 DNS=$servers
 FallbackDNS=
 Domains=~.
 EOF2
-  if systemctl restart systemd-resolved && resolvectl status >/dev/null 2>&1; then
-    success 'DNS set shod. Baraye check: resolvectl status'
-    warn 'Link-specific DHCP DNS momken ast priority motefavet dashte bashad.'
-  else
-    fail 'DNS restart fail shod; dar hale rollback'
-    restore_dns_unchecked
-    return 1
+  then
+    if systemctl restart systemd-resolved && timeout 8 resolvectl query example.com >/dev/null 2>&1; then
+      success 'DNS set shod. Baraye check: resolvectl status'
+      warn 'Link-specific DHCP DNS momken ast priority motefavet dashte bashad.'
+      return 0
+    fi
   fi
+  fail 'Zakhire ya test DNS fail shod; dar hale rollback'
+  restore_dns_unchecked || fail 'DNS rollback fail shod'
+  return 1
 }
 
 restore_dns_unchecked() {
   local backup="$(backup_dir)/dns" target='/etc/systemd/resolved.conf.d/90-srv-helper.conf' typ
   [[ -f "$backup/previous.type" ]] || return 1
   IFS= read -r typ < "$backup/previous.type"
-  if [[ "$typ" == existing && -f "$backup/previous.conf" ]]; then cp -a "$backup/previous.conf" "$target"
-  else rm -f "$target"; fi
+  case "$typ" in
+    existing) cp -a "$backup/previous.conf" "$target" || return 1 ;;
+    none) rm -f "$target" || return 1 ;;
+    *) return 1 ;;
+  esac
   systemctl restart systemd-resolved
 }
 restore_dns() {
@@ -129,8 +138,8 @@ ensure_dig() {
 }
 
 rank_dns_servers() {
-  local region=${1:-iran} rec name ip idx=0 tmp start end elapsed out domain ok total
-  ensure_dig >&2 || return 1
+  local region=${1:-iran} rec name ip idx=0 tmp start end elapsed out domain ok total avg
+  command -v dig >/dev/null 2>&1 || return 1
   tmp=$(mktemp -d /tmp/srv-helper-dns.XXXXXXXX) || return 1
   local -a records=()
   mapfile -t records < <(dns_candidate_records "$region")
@@ -141,17 +150,17 @@ rank_dns_servers() {
       ok=0; total=0
       for domain in example.com github.com cloudflare.com; do
         start=$(date +%s%N 2>/dev/null || echo 0)
-        out=$(dig +short +time=1 +tries=1 "@$ip" "$domain" A 2>/dev/null || true)
+        out=$(dig -r +short +time=1 +tries=1 "@$ip" "$domain" A 2>/dev/null) || continue
         end=$(date +%s%N 2>/dev/null || echo 0)
         if grep -Eq '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' <<< "$out"; then
           ((ok+=1))
           if [[ "$start" =~ ^[0-9]+$ && "$end" =~ ^[0-9]+$ ]] && ((end>=start)); then
-            elapsed=$(((end-start)/1000000)); ((total+=elapsed))
+            elapsed=$(((end-start)/1000000)); total=$((total+elapsed))
           fi
         fi
       done
-      if ((ok>0)); then
-        ((ok>0)) && avg=$((total/ok)) || avg=9999
+      if ((ok==3)); then
+        avg=$((total/ok))
         printf '%s|%s|%s|%s\n' "$ok" "$avg" "$name" "$ip" > "$tmp/$idx.ok"
       else printf '%s|%s\n' "$name" "$ip" > "$tmp/$idx.fail"; fi
     ) &
@@ -177,6 +186,7 @@ dns_finder_menu() {
   prompt 'Mantaghe' choice; rc=$?
   ((rc==0)) || return "$rc"
   case "$choice" in 1) region=iran ;; 2) region=global ;; 0) return 0 ;; *) warn 'Gozine namotabar'; return 1 ;; esac
+  ensure_dig || return 1
   local -a ranked=()
   mapfile -t ranked < <(rank_dns_servers "$region")
   if ((${#ranked[@]}==0)); then warn 'DNS pasokhgo peyda nashod'; return 1; fi

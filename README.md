@@ -24,9 +24,9 @@
 ### 2. DNS & Mirrors
 
 - Iranian DNS profiles, ISP resolvers and international DNS providers.
-- DNS Finder measures response success and latency before recommending resolvers.
+- DNS Finder recommends resolvers that answer all three test domains and ranks them by latency. Before applying a profile, it checks each resolver from the server.
 - Regional APT mirrors for Iran, Europe and the USA.
-- Mirror checks verify the distribution `Release` file before selection.
+- Mirror checks require `Release` metadata for the distribution codename and installed APT architecture. Ubuntu on non-x86 architectures uses the official ports archive. APT verifies repository signatures and failed updates trigger rollback.
 - Previous DNS and APT configurations are backed up and can be restored.
 
 ### 3. Smart Setup
@@ -111,3 +111,8 @@ bash tests/test.sh
 ```
 
 These tests cover shell syntax, domain validation, the input-variable regression, SAN argument construction, DNS profiles, mirror selection and menu navigation. They do not replace a real ACME issuance test on a disposable VPS.
+
+
+## Project references
+
+The regional resolver benchmarking and mirror selection workflows draw on [IranDNSFinder](https://github.com/alinezamifar/IranDNSFinder) and [DetectUbuntuMirror](https://github.com/alinezamifar/DetectUbuntuMirror). SRV Helper implements its own checks and measures reachability from the server where it runs.

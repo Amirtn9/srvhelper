@@ -39,9 +39,9 @@ main_menu() {
     [[ ${SRV_EXIT_REQUESTED:-0} == 1 ]] && return 0
     banner
     quick_status
-    section 'AMIRTN9 | MENU ASLI'
+    section 'MENU ASLI'
     menu_line 1 'Modiriat SSL va Certificate'
-    menu_line 2 'DNS va Mirror'
+    menu_line 2 'Shabake: DNS va Mirror APT'
     menu_line 3 'Khadamat Server'
     menu_line 4 'Abzar System'
     menu_line 0 'Khorooj'

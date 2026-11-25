@@ -24,6 +24,13 @@ debian_mirror_candidates() {
 mirror_candidates() {
   local family=${2:-ubuntu}
   [[ "$family" == debian ]] && { debian_mirror_candidates "$1"; return; }
+  # Ubuntu publishes non-x86 packages in the ports archive.
+  local architecture
+  architecture=$(dpkg --print-architecture) || return 1
+  case "$architecture" in
+    amd64|i386) ;;
+    *) printf '%s\n' 'https://ports.ubuntu.com/ubuntu-ports'; return ;;
+  esac
   case "$1" in
     iran)
       # All candidates are runtime-verified: entries can disappear or be stale.
@@ -61,14 +68,24 @@ mirror_candidates() {
         'http://archive.ubuntu.com/ubuntu' ;;
   esac
 }
-mirror_probe() {
-  local url=$1 codename=$2 result code secs
-  result=$(curl -L -sS --connect-timeout 3 --max-time 10 -o /dev/null -w '%{http_code} %{time_total}' "$url/dists/$codename/Release" 2>/dev/null) || return 1
-  read -r code secs <<< "$result"
-  [[ "$code" == 200 ]] || return 1
-  # Must be a valid Release path for this codename. HEAD may be blocked; use GET.
-  printf '%s' "$secs"
-}
+mirror_probe() (
+  local url=$1 codename=$2 architecture file seconds
+  [[ "$codename" =~ ^[a-z0-9-]+$ ]] || return 1
+  architecture=$(dpkg --print-architecture) || return 1
+  file=$(mktemp) || return 1
+  trap 'rm -f -- "$file"' EXIT
+  seconds=$(curl --fail --silent --show-error --location --proto '=http,https' \
+    --proto-redir '=http,https' --connect-timeout 3 --max-time 10 --max-filesize 2097152 \
+    -o "$file" -w '%{time_total}' "${url%/}/dists/$codename/Release" 2>/dev/null) || return 1
+  LC_ALL=C awk -v code="$codename" -v arch="$architecture" '
+    $1 == "Codename:" && $2 == code { codename = 1 }
+    $1 == "Architectures:" {
+      for (i = 2; i <= NF; i++) if ($i == arch) architecture = 1
+    }
+    END { exit !(codename && architecture) }
+  ' "$file" || return 1
+  printf '%s' "$seconds"
+)
 rank_mirrors() {
   local region=$1 codename=$2 family=${3:-ubuntu} url seconds i=0 jobfile
   local tmp
@@ -126,11 +143,11 @@ apply_mirror() {
   [[ -r "$state" ]] && IFS= read -r old < "$state"
   timestamp=$(date -u +'%Y%m%dT%H%M%SZ')
   bdir="$(backup_dir)/apt-$timestamp-$$"
-  install -d -m 700 "$bdir"
+  install -d -m 700 "$bdir" || return 1
   local -a files=()
   while IFS= read -r file; do
     files+=("$file")
-    cp -a -- "$file" "$bdir/$(basename "$file")"
+    cp -a -- "$file" "$bdir/$(basename "$file")" || return 1
   done < <(apt_source_files)
   if ((${#files[@]} == 0)); then fail 'Ubuntu APT source peyda nashod'; return 1; fi
   # Modify only official distro archive URLs; third-party and security repositories stay unchanged.
@@ -140,15 +157,27 @@ new, old, family, *files = sys.argv[1:]
 # Match only official archive URLs (never security.debian.org / Ubuntu security) or
 # the last mirror selected by SRV Helper.
 if family == "ubuntu":
-    base = r'https?://(?:[a-z0-9-]+\.)*archive\.ubuntu\.com/ubuntu/?'
+    base = r'https?://(?:[a-z0-9-]+\.)*archive\.ubuntu\.com/ubuntu/?|https?://ports\.ubuntu\.com/ubuntu-ports/?'
 else:
     base = r'https?://(?:deb\.debian\.org/debian|ftp\.[a-z0-9.-]+\.debian\.org/debian)/?(?=/|[\s]|$)'
-pattern = re.compile(base + (r'|' + re.escape(old.rstrip('/')) + r'/?(?=/|[\s]|$)' if old.startswith(('http://','https://')) else ''), re.I)
+if old.startswith(("http://", "https://")):
+    base += r"|" + re.escape(old.rstrip("/")) + r"/?"
+pattern = re.compile(r"(?:" + base + r")(?=\s|$)", re.I)
 changes = 0
 for name in files:
     path = pathlib.Path(name)
     original = path.read_text()
-    updated = pattern.sub(new, original)
+    lines = original.splitlines(keepends=True)
+    if path.suffix == ".sources":
+        for index, line in enumerate(lines):
+            if re.match(r"^URIs:\s", line, re.I):
+                lines[index] = pattern.sub(new, line)
+    else:
+        for index, line in enumerate(lines):
+            if re.match(r"^\s*deb(?:-src)?\s", line):
+                source, comment, trailing = line.partition("#")
+                lines[index] = pattern.sub(new, source) + comment + trailing
+    updated = "".join(lines)
     if updated != original:
         path.write_text(updated)
         changes += 1
@@ -161,7 +190,7 @@ PY
     fail 'Mirror taghir nakard; config ghabli hefz shod'; return 1
   fi
   info 'APT update test dar hale ejra ...'
-  if DEBIAN_FRONTEND=noninteractive apt-get update; then
+  if DEBIAN_FRONTEND=noninteractive apt-get -o APT::Update::Error-Mode=any update; then
     install -d -m 700 /var/lib/srv-helper
     printf '%s\n' "$new" > "$state"
     chmod 600 "$state"
@@ -186,7 +215,7 @@ restore_mirror() {
     [[ -f "$file" ]] && cp -a -- "$file" "$original"
   done
   rm -f /var/lib/srv-helper/last-mirror /var/lib/srv-helper/last-apt-backup
-  DEBIAN_FRONTEND=noninteractive apt-get update || warn 'APT update bad az restore fail shod'
+  DEBIAN_FRONTEND=noninteractive apt-get -o APT::Update::Error-Mode=any update || warn 'APT update bad az restore fail shod'
   success 'Mirror restore shod'
 }
 mirror_menu() {

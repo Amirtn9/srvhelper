@@ -3,7 +3,7 @@
 server_country_code() {
   local code=''
   if command -v curl >/dev/null 2>&1; then
-    code=$(curl -4fsS --connect-timeout 3 --max-time 6 https://ipinfo.io/country 2>/dev/null | tr -d '[:space:]' | head -c 2 || true)
+    code=$(curl -4fsS --connect-timeout 3 --max-time 6 https://ipinfo.io/country 2>/dev/null | tr -d '[:space:]' || true)
   fi
   [[ "$code" =~ ^[A-Z]{2}$ ]] || return 1
   printf '%s' "$code"
@@ -62,7 +62,7 @@ smart_auto_optimize() {
   confirm 'Tanzim hoshmand shoroo shavad?' || return 1
 
   section 'MARHALE 1/4 | DNS FINDER'
-  if mapfile -t dns_ranked < <(rank_dns_servers "$region") && ((${#dns_ranked[@]}>0)); then
+  if ensure_dig && mapfile -t dns_ranked < <(rank_dns_servers "$region") && ((${#dns_ranked[@]}>0)); then
     IFS='|' read -r _ _ _ dns_first <<< "${dns_ranked[0]}"
     dns_second=$dns_first
     if ((${#dns_ranked[@]}>1)); then IFS='|' read -r _ _ _ dns_second <<< "${dns_ranked[1]}"; fi
@@ -90,7 +90,7 @@ smart_auto_optimize() {
 
   section 'MARHALE 3/4 | APT UPDATE'
   if [[ "$update_state" != 'UPDATE BA MIRROR ENTEKHAB-SHODE MOVAFAGH' ]]; then
-    if DEBIAN_FRONTEND=noninteractive apt-get update; then update_state='APT UPDATE MOVAFAGH';
+    if DEBIAN_FRONTEND=noninteractive apt-get -o APT::Update::Error-Mode=any update; then update_state='APT UPDATE MOVAFAGH';
     else update_state='APT UPDATE NAMOVAFAGH'; fi
   fi
   info 'Update list package ha tamam shod; package ha upgrade nashodand.'

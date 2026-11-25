@@ -11,7 +11,8 @@ quick_status() {
   ram=$(free -h 2>/dev/null | awk 'NR==2 {print $3 "/" $2}')
   disk=$(df -h / 2>/dev/null | awk 'NR==2 {print $5}')
   uptime_line=$(uptime -p 2>/dev/null || echo unknown)
-  printf '%b\n' "${DIM}  $host | $os | CPU: $cpu | RAM: ${ram:-?} | Disk: ${disk:-?} | Moddat: $uptime_line${RESET}"
+  printf '  %s%s  /  %s%s\n  CPU: %s  |  RAM: %s  |  Disk: %s  |  Uptime: %s\n' \
+    "$DIM" "$host" "$os" "$RESET" "$cpu" "${ram:-?}" "${disk:-?}" "$uptime_line"
 }
 
 system_overview() {

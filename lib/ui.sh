@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Compact terminal UI. All interactive text is Finglish/ASCII.
-if [[ -t 1 && -z ${NO_COLOR:-} ]]; then
+if [[ -t 1 && ${TERM:-dumb} != dumb && -z ${NO_COLOR:-} ]]; then
   C1=$'\033[1;96m'; C2=$'\033[1;94m'; C3=$'\033[1;95m'
   OK=$'\033[1;92m'; BAD=$'\033[1;91m'; WARN=$'\033[1;93m'
   DIM=$'\033[2m'; WHITE=$'\033[1;97m'; RESET=$'\033[0m'
@@ -12,17 +12,14 @@ SRV_EXIT_REQUESTED=${SRV_EXIT_REQUESTED:-0}
 SRV_BACK_REQUESTED=${SRV_BACK_REQUESTED:-0}
 
 banner() {
-  [[ -t 1 && -z ${NO_CLEAR:-} ]] && printf '\033[2J\033[H'
-  printf '%b\n' "${C1}  +--------------------------------------------------------------------+${RESET}"
-  printf '%b\n' "${C1}  |${RESET}                         ${WHITE}SRV HELPER${RESET}                                 ${C1}|${RESET}"
-  printf '%b\n' "${C1}  |${RESET}                    MODIRIAT SERVER                                 ${C1}|${RESET}"
-  printf '%b\n' "${C1}  |${RESET}  ${C3}AMIRTN9${RESET}  |  github.com/AmirTN9/srvhelper                          ${C1}|${RESET}"
-  printf '%b\n' "${C1}  |${RESET}                         VERSION 1.0.0                              ${C1}|${RESET}"
-  printf '%b\n' "${C1}  +--------------------------------------------------------------------+${RESET}"
+  if [[ -t 1 && ${TERM:-dumb} != dumb && -z ${NO_CLEAR:-} ]]; then
+    printf '\033[2J\033[H'
+  fi
+  printf '\n  %sSRV HELPER%s  %sv%s%s\n' "$WHITE" "$RESET" "$DIM" "${SRV_VERSION:-}" "$RESET"
 }
 section() {
-  printf '\n%b\n' "${C2}  $1${RESET}"
-  printf '%b\n' "${DIM}  --------------------------------------------------------------------${RESET}"
+  printf '\n  %s%s%s\n' "$C2" "$1" "$RESET"
+  printf '  %s------------------------------------%s\n' "$DIM" "$RESET"
 }
 step() {
   local current=$1 total=$2 label=$3 filled='' empty='' n
@@ -32,14 +29,14 @@ step() {
   printf '\n%b\n' "${C1}  MARHALE $current/$total  [$filled$empty]  $label${RESET}"
 }
 menu_line() { printf '  %b%2s%b  %s\n' "$C1" "$1" "$RESET" "$2"; }
-info() { printf '%b\n' "${C1}[INFO]${RESET} $*"; }
-success() { printf '%b\n' "${OK}[ OK ]${RESET} $*"; }
-warn() { printf '%b\n' "${WARN}[WARN]${RESET} $*"; }
-fail() { printf '%b\n' "${BAD}[FAIL]${RESET} $*" >&2; }
+info() { printf '  %s[INFO]%s %s\n' "$C1" "$RESET" "$*"; }
+success() { printf '  %s[ OK ]%s %s\n' "$OK" "$RESET" "$*"; }
+warn() { printf '  %s[WARN]%s %s\n' "$WARN" "$RESET" "$*"; }
+fail() { printf '  %s[FAIL]%s %s\n' "$BAD" "$RESET" "$*" >&2; }
 
 prompt() {
   local label=$1 destination=$2 _srv_prompt_value
-  printf '%b' "${C1}  > ${label}: ${RESET}"
+  printf '  %s> %s: %s' "$C1" "$label" "$RESET"
   IFS= read -r _srv_prompt_value || return 1
   _srv_prompt_value=${_srv_prompt_value//$'\r'/}
   case "${_srv_prompt_value,,}" in

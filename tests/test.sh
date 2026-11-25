@@ -38,9 +38,14 @@ if valid_positive_count '55' 25; then echo 'FAIL count' >&2; exit 1; fi
 [[ "$(dns_profile tic)" == '217.218.155.155 217.218.127.127' ]]
 [[ "$(dns_candidate_records iran | wc -l)" -ge 30 ]]
 ! dns_candidate_records global | grep -q 'TIC-IR'
-[[ "$(mirror_candidates iran | wc -l)" -ge 18 ]]
-[[ "$(mirror_candidates europe | wc -l)" -ge 3 ]]
-[[ "$(mirror_candidates usa | wc -l)" -ge 2 ]]
+(
+  dpkg() { printf '%s\n' amd64; }
+  [[ "$(mirror_candidates iran | wc -l)" -ge 18 ]]
+  [[ "$(mirror_candidates europe | wc -l)" -ge 3 ]]
+  [[ "$(mirror_candidates usa | wc -l)" -ge 2 ]]
+  dpkg() { printf '%s\n' arm64; }
+  [[ "$(mirror_candidates iran)" == 'https://ports.ubuntu.com/ubuntu-ports' ]]
+)
 [[ "$(mirror_candidates iran debian | wc -l)" -ge 4 ]]
 [[ "$(mirror_candidates europe debian | wc -l)" -ge 4 ]]
 [[ "$(region_from_country IR)" == iran ]]
@@ -106,6 +111,37 @@ rm -f "$argsfile"
   [[ "$(wc -l < "$tmp/deploy.log")" == '3' ]]
 )
 
+# A resolver with partial answers must never become a recommended server.
+(
+  dns_candidate_records() { printf '%s\n' 'Full|192.0.2.1' 'Partial|192.0.2.2'; }
+  dig() {
+    if [[ "$*" == *'@192.0.2.2'* && "$*" != *'example.com'* ]]; then
+      return 1
+    fi
+    printf '%s\n' '192.0.2.10'
+  }
+  result=$(rank_dns_servers iran)
+  [[ "$result" == '3|'*'|Full|192.0.2.1' ]]
+)
+
+# Release metadata must identify the requested suite and support the local APT architecture.
+(
+  dpkg() { printf '%s\n' amd64; }
+  curl() {
+    while [[ "$1" != -o ]]; do shift; done
+    printf '%s\n' "$release" > "$2"
+    printf '%s' '0.05'
+  }
+  release=$'Codename: jammy\nArchitectures: amd64 arm64'
+  [[ "$(mirror_probe https://example.com/ubuntu jammy)" == '0.05' ]]
+  release=$'Codename: noble\nArchitectures: amd64'
+  ! mirror_probe https://example.com/ubuntu jammy
+  release=$'Codename: jammy\nArchitectures: arm64'
+  ! mirror_probe https://example.com/ubuntu jammy
+  release='<html>OK</html>'
+  ! mirror_probe https://example.com/ubuntu jammy
+)
+
 # Mirror ranking returns only validated URLs and sorts by measured latency.
 mirror_candidates() { printf '%s\n' 'https://one.example/ubuntu' 'https://two.example/ubuntu'; }
 mirror_probe() { case "$1" in *one*) printf '0.20';; *two*) printf '0.05';; esac; }
@@ -123,11 +159,11 @@ back_rc=$(printf 'back\n' | bash -c 'source "$1/lib/ui.sh"; prompt test value >/
 exit_rc=$(printf 'exit\n' | bash -c 'source "$1/lib/ui.sh"; prompt test value >/dev/null; echo "$?:$SRV_EXIT_REQUESTED"' _ "$home")
 [[ "$exit_rc" == '21:1' ]]
 
-# Terminal UI is ASCII/Finglish, compact and does not mention other project authors.
+# Terminal UI is ASCII/Finglish. Check branding in loaded modules only.
 if LC_ALL=C grep -nP '[^\x00-\x7F]' "$home"/srv-helper.sh "$home"/install.sh "$home"/hooks/*.sh "$home"/lib/*.sh; then
   echo 'FAIL non-ASCII interface strings' >&2; exit 1
 fi
-if grep -nEi 'behzad|netoptix|syshelper|mexenon|alinezamifar|mhsanaei' "$home"/srv-helper.sh "$home"/install.sh "$home"/lib/*.sh; then
+if grep -nEi 'behzad|netoptix|syshelper|mexenon|alinezamifar|mhsanaei' "$home"/srv-helper.sh "$home"/install.sh "$home"/lib/{ui,certs,mirrors,dns,system,maintenance,tunnels,automation}.sh; then
   echo 'FAIL third-party author/project name in interactive scripts' >&2; exit 1
 fi
 [[ -s "$home/assets/srv-helper-banner.png" ]]
