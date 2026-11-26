@@ -65,7 +65,8 @@ confirm() {
   local answer
   printf '\n  %s [y/N] ' "$1"
   read -r answer || return 1
-  answer=${answer//$'\r'/}
+  answer=${answer%$'\r'}
+  answer=${answer%"${answer##*[![:blank:]]}"}
   case "${answer,,}" in
     y|yes) return 0 ;;
     *) return 1 ;;
