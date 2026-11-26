@@ -68,9 +68,9 @@
 روی سرور Ubuntu یا Debian، با کاربری که دسترسی `sudo` دارد:
 
 ```bash
-git clone --depth 1 https://github.com/Amirtn9/srvhelper.git
-cd srvhelper
-sudo bash install.sh --launch
+git clone --depth 1 https://github.com/Amirtn9/srvhelper.git &&
+  cd srvhelper &&
+  sudo bash install.sh --launch
 ```
 
 نصب‌کننده منبع و مقصد را نشان می‌دهد، برای ادامه تأیید می‌گیرد و پیشرفت را در چهار مرحله نمایش می‌دهد. نصب در `/opt/srv-helper` انجام می‌شود. برای اجرای بعدی روی سرور از `sudo srv-helper` استفاده کنید.
@@ -81,16 +81,26 @@ sudo bash install.sh --launch
 | `--yes` | نصب بدون سؤال برای خودکارسازی |
 | `--launch` | باز کردن منوی برنامه پس از نصب در همان ترمینال |
 
+### به‌روزرسانی پوشهٔ موجود
+
+اگر قبلاً پروژه را در `~/srvhelper` گرفته‌اید، همان نسخه را به‌روز کنید. اگر ادغام سریع ممکن نباشد، دستور نصب اجرا نمی‌شود.
+
+```bash
+cd ~/srvhelper &&
+  git pull --ff-only &&
+  bash install.sh --check &&
+  sudo bash install.sh --launch
+```
+
 ## اجرای آنلاین از ترمینال
 
-این مسیر به دسترسی HTTPS به GitHub نیاز دارد. فایل نصب‌کننده را دانلود کنید تا بتوانید پیش از اجرا آن را ببینید.
+این مسیر به دسترسی HTTPS به GitHub نیاز دارد. برای مشاهدهٔ اختیاری فایل نصب‌کننده، پس از دانلود آن را با `less "$installer/install.sh"` باز کنید و با `q` برگردید.
 
 ```bash
 installer=$(mktemp -d)
 curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fL \
   https://raw.githubusercontent.com/Amirtn9/srvhelper/main/install.sh \
   -o "$installer/install.sh" &&
-  less "$installer/install.sh" &&
   sudo bash "$installer/install.sh" --launch
 ```
 

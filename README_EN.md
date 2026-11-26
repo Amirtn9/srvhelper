@@ -50,11 +50,12 @@
 ## Install from the GitHub repository
 
 ```bash
-git clone https://github.com/Amirtn9/srvhelper.git
-cd srvhelper
-sudo bash install.sh
-sudo srv-helper
+git clone --depth 1 https://github.com/Amirtn9/srvhelper.git &&
+  cd srvhelper &&
+  sudo bash install.sh --launch
 ```
+
+For an existing checkout, run `git pull --ff-only && bash install.sh --check && sudo bash install.sh --launch` from the repository root.
 
 ## Offline transfer
 
