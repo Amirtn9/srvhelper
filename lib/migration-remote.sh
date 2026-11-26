@@ -26,7 +26,7 @@ case "$mode" in
       awk 'NF {print "POSTGRES="$1":"$2":"$3":"$4}' <<< "$clusters"
       if [[ -n "$clusters" && "$clusters" != *$'\n'* ]]; then
         read -r _ _ port status _ <<< "$clusters"
-        if [[ "$status" == online ]]; then
+        if [[ "$status" == online* ]]; then
           dbs=$(runuser -u postgres -- psql -X -At --port "$port" --dbname postgres -v ON_ERROR_STOP=1 \
             -c "SELECT datname FROM pg_database WHERE datname NOT IN ('postgres','template0','template1') ORDER BY datname")
           if [[ -n "$dbs" ]]; then printf '%s\n' "$dbs" | sed 's/^/PG_DATABASE=/'; fi
@@ -78,8 +78,9 @@ case "$mode" in
     if [[ -z "$accounts" ]]; then exit 0; fi
     while IFS= read -r account; do
       definition=$("$client" --batch --raw --skip-column-names -e "SHOW CREATE USER $account")
-      [[ "$definition" == *$'\t'* ]] || exit 2
-      printf '%s;\n' "${definition#*$'\t'}"
+      if [[ "$definition" != 'CREATE USER '* ]]; then definition=${definition#*$'\t'}; fi
+      [[ "$definition" == 'CREATE USER '* ]] || exit 2
+      printf '%s;\n' "$definition"
       "$client" --batch --raw --skip-column-names -e "SHOW GRANTS FOR $account" | sed 's/$/;/'
     done <<< "$accounts"
     ;;
