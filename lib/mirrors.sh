@@ -7,6 +7,7 @@ debian_mirror_candidates() {
       'https://mirror.arvancloud.ir/debian' \
       'https://mirror.pishgaman.net/debian' \
       'https://mirror.aminidc.com/debian' \
+      'https://mirror.famaserver.com/debian' \
       'https://ftp.ir.debian.org/debian' \
       'https://deb.debian.org/debian' ;;
     europe) printf '%s\n' \
@@ -47,12 +48,13 @@ mirror_candidates() {
         'https://mirror.aminidc.com/ubuntu' \
         'https://mirrors.pardisco.co/ubuntu' \
         'https://archive.ubuntu.petiak.ir/ubuntu' \
-        'https://linuxmirrors.ir/ubuntu' \
+        'https://repo.linuxmirrors.ir/ubuntu' \
+        'https://mirror.famaserver.com/archive' \
         'https://ubuntu.parsvds.com/ubuntu' \
         'https://mirror.faraso.org/ubuntu' \
         'https://mirrors.ubuntu.dimit.cloud/ubuntu' \
-        'https://repo.iut.ac.ir/ubuntu' \
-        'http://ir.archive.ubuntu.com/ubuntu' \
+        'http://repo.iut.ac.ir/repo/Ubuntu' \
+        'https://ir.archive.ubuntu.com/ubuntu' \
         'http://archive.ubuntu.com/ubuntu' ;;
     europe)
       printf '%s\n' \
@@ -121,7 +123,28 @@ rank_mirrors() {
   if ((${#results[@]} == 0)); then
     fail 'Hich mirror motabari peyda nashod' >&2; return 1
   fi
-  printf '%s\n' "${results[@]}" | LC_ALL=C sort -n -t '|' -k1,1 | cut -d '|' -f2-
+  printf '%s\n' "${results[@]}" | LC_ALL=C sort -n -t '|' -k1,1
+}
+
+select_ranked_mirror() {
+  local destination=$1 region=$2 code=$3 family=$4 ranking
+  local seconds url label index choice
+  local -a entries=() options=()
+  ranking=$(rank_mirrors "$region" "$code" "$family") || return 1
+  while IFS='|' read -r seconds url; do
+    index=$((${#entries[@]} + 1))
+    label=$(LC_ALL=C awk -v seconds="$seconds" 'BEGIN {printf "%5.0f ms", seconds * 1000}')
+    entries+=("$url")
+    options+=("$index" "$label  $url")
+    ((index < 10)) || break
+  done <<< "$ranking"
+  choose_menu choice 'SELECT AN APT MIRROR' 'Release fetch time (lower is better) | Suite and architecture verified' \
+    "${options[@]}" 0 'Skip mirror change' || return $?
+  if [[ ! "$choice" =~ ^([1-9]|10)$ ]] || ((choice > ${#entries[@]})); then
+    [[ "$choice" == 0 ]] || warn 'Invalid mirror number.'
+    return 1
+  fi
+  printf -v "$destination" '%s' "${entries[choice-1]}"
 }
 apt_source_files() {
   local os_id
@@ -134,7 +157,7 @@ apt_source_files() {
   fi
 }
 apply_mirror() {
-  local new=$1 old='' bdir timestamp file changed os_id family
+  local new=$1 old='' bdir timestamp file os_id family known
   need_root && need_cmd python3 && need_cmd apt-get || return 1
   os_id=$(. /etc/os-release 2>/dev/null; printf '%s' "${ID:-unknown}")
   case "$os_id" in ubuntu) family=ubuntu ;; debian) family=debian ;; *) fail 'Mirror auto faghat Ubuntu/Debian ra poshtibani mikonad'; return 1 ;; esac
@@ -150,18 +173,19 @@ apply_mirror() {
     cp -a -- "$file" "$bdir/$(basename "$file")" || return 1
   done < <(apt_source_files)
   if ((${#files[@]} == 0)); then fail 'Ubuntu APT source peyda nashod'; return 1; fi
-  # Modify only official distro archive URLs; third-party and security repositories stay unchanged.
-  if ! python3 - "$new" "$old" "$family" "${files[@]}" <<'PY'
+  known=$(mirror_candidates iran "$family") || return 1
+  # Match distro archives known to SRV Helper, including preconfigured local mirrors.
+  if ! python3 - "$new" "$old" "$family" "$known" "${files[@]}" <<'PY'
 import pathlib, re, sys
-new, old, family, *files = sys.argv[1:]
-# Match only official archive URLs (never security.debian.org / Ubuntu security) or
-# the last mirror selected by SRV Helper.
+new, old, family, known, *files = sys.argv[1:]
+# Exclude dedicated security archives and unrelated third-party repositories.
 if family == "ubuntu":
     base = r'https?://(?:[a-z0-9-]+\.)*archive\.ubuntu\.com/ubuntu/?|https?://ports\.ubuntu\.com/ubuntu-ports/?'
 else:
     base = r'https?://(?:deb\.debian\.org/debian|ftp\.[a-z0-9.-]+\.debian\.org/debian)/?(?=/|[\s]|$)'
-if old.startswith(("http://", "https://")):
-    base += r"|" + re.escape(old.rstrip("/")) + r"/?"
+for url in [*known.splitlines(), old]:
+    if url.startswith(("http://", "https://")):
+        base += r"|https?://" + re.escape(url.split("://", 1)[1].rstrip("/")) + r"/?"
 pattern = re.compile(r"(?:" + base + r")(?=\s|$)", re.I)
 changes = 0
 for name in files:
@@ -229,7 +253,7 @@ mirror_menu() {
   code=$(. /etc/os-release; printf '%s' "${VERSION_CODENAME:-}")
   [[ -n "$code" ]] || { fail 'Codename system tashkhis dade nashod'; pause; return; }
   choose_menu choice 'MODIRIAT MIRROR HAYE APT' '' \
-    1 'Iran: test va entekhab behtarin' \
+    1 'Iran: test and choose a mirror' \
     2 'Europe: DE / NL / FR / UK' \
     3 'USA: US / Princeton' \
     4 'URL mirror delkhah (ba test)' \
@@ -251,12 +275,7 @@ mirror_menu() {
     *) warn 'Gozine namotabar'; pause; return ;;
   esac
   if [[ -n "${region:-}" ]]; then
-    local -a ranked=()
-    mapfile -t ranked < <(rank_mirrors "$region" "$code" "$family")
-    if ((${#ranked[@]} == 0)); then fail 'Mirror motabar nist'; pause; return; fi
-    selected=${ranked[0]}
-    info "Mirror ba behtarin pasokh: $selected"
-    info 'Zaman pasokh va mojood boodan Release check mishavad; sorat download momken ast motefavet bashad.'
+    select_ranked_mirror selected "$region" "$code" "$family" || return
   fi
   warn 'Source haye APT taghir mikonand. Backup khodkar gerefte mishavad.'
   if confirm "Mirror $selected set shavad?"; then apply_mirror "$selected"; fi

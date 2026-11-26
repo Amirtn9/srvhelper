@@ -142,11 +142,29 @@ rm -f "$argsfile"
   ! mirror_probe https://example.com/ubuntu jammy
 )
 
-# Mirror ranking returns only validated URLs and sorts by measured latency.
+# Mirror ranking keeps the measured latency and returns fastest first.
 mirror_candidates() { printf '%s\n' 'https://one.example/ubuntu' 'https://two.example/ubuntu'; }
 mirror_probe() { case "$1" in *one*) printf '0.20';; *two*) printf '0.05';; esac; }
 ranking=$(rank_mirrors test jammy 2>/dev/null)
-[[ "$(printf '%s\n' "$ranking" | head -1)" == 'https://two.example/ubuntu' ]]
+[[ "$(printf '%s\n' "$ranking" | head -1)" == '0.05|https://two.example/ubuntu' ]]
+
+# The tenth entry can be selected, and the results omit the eleventh.
+(
+  rank_mirrors() {
+    local i
+    for ((i=1; i<=11; i++)); do
+      printf '0.%02d|https://mirror%s.example/ubuntu\n' "$i" "$i"
+    done
+  }
+  output=$(
+    select_ranked_mirror selected iran noble ubuntu <<< '10'
+    printf '\nSelected: %s\n' "$selected"
+  )
+  [[ "$output" == *'100 ms  https://mirror10.example/ubuntu'* ]]
+  [[ "$output" == *'Selected: https://mirror10.example/ubuntu'* ]]
+  [[ "$output" != *'mirror11.example'* ]]
+  if select_ranked_mirror selected iran noble ubuntu <<< '0' >/dev/null; then exit 1; fi
+)
 
 # The real menu must accept the reported hostname and reach the validation-method screen.
 ssl_menu_output=$(printf '1\n1\npl24.pingyar.com\nback\n0\n0\n' | env NO_COLOR=1 NO_CLEAR=1 bash "$home/srv-helper.sh" 2>&1)

@@ -25,7 +25,7 @@
 
 - Iranian DNS profiles, ISP resolvers and international DNS providers.
 - DNS Finder recommends resolvers that answer all three test domains and ranks them by latency. Before applying a profile, it checks each resolver from the server.
-- Regional APT mirrors for Iran, Europe and the USA.
+- Regional APT mirrors for Iran, Europe and the USA. Choose from up to ten compatible mirrors ranked by Release download time, measured in milliseconds from your server.
 - Mirror checks require `Release` metadata for the distribution codename and installed APT architecture. Ubuntu on non-x86 architectures uses the official ports archive. APT verifies repository signatures and failed updates trigger rollback.
 - Previous DNS and APT configurations are backed up and can be restored.
 

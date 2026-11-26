@@ -45,7 +45,7 @@ choose_auto_region() {
 
 smart_auto_optimize() {
   local region os_id family code dns_first dns_second dns_servers='' mirror='' update_state='ANJAM NASHOD' dns_state='ANJAM NASHOD' bbr_state='ANJAM NASHOD'
-  local -a dns_ranked=() mirror_ranked=()
+  local -a dns_ranked=()
   need_root || return 1
   banner; section 'TANZIM HOSHMAND SHABAKE'
   info 'DNS, Mirror, package update va BBR be tartib check mishavand.'
@@ -79,12 +79,12 @@ smart_auto_optimize() {
   os_id=$(. /etc/os-release 2>/dev/null; printf '%s' "${ID:-unknown}")
   code=$(. /etc/os-release 2>/dev/null; printf '%s' "${VERSION_CODENAME:-}")
   case "$os_id" in ubuntu) family=ubuntu ;; debian) family=debian ;; *) family='' ;; esac
-  if [[ -n "$family" && -n "$code" ]] && mapfile -t mirror_ranked < <(rank_mirrors "$region" "$code" "$family") && ((${#mirror_ranked[@]}>0)); then
-    mirror=${mirror_ranked[0]}
-    info "Mirror ba behtarin pasokh: $mirror"
+  if [[ -n "$family" && -n "$code" ]] && select_ranked_mirror mirror "$region" "$code" "$family"; then
+    info "Mirror selected: $mirror"
     if apply_mirror "$mirror"; then update_state='UPDATE BA MIRROR ENTEKHAB-SHODE MOVAFAGH'; else update_state='MIRROR FAIL SHOD / ROLLBACK ANJAM SHOD'; fi
   else
-    warn 'Mirror motabar baraye in OS ya mantaghe peyda nashod.'
+    [[ ${SRV_BACK_REQUESTED:-0} == 1 || ${SRV_EXIT_REQUESTED:-0} == 1 ]] && return 0
+    info 'Mirror change skipped.'
     mirror='Taghir nakard'
   fi
 
