@@ -56,7 +56,7 @@ dns_status() {
   else cat /etc/resolv.conf 2>/dev/null || :; fi
 }
 
-apply_dns() {
+apply_dns() (
   local profile=$1 servers=$2 target='/etc/systemd/resolved.conf.d/90-srv-helper.conf'
   need_root || return 1
   if ! command -v systemctl >/dev/null || ! systemctl is-active --quiet systemd-resolved; then
@@ -64,7 +64,7 @@ apply_dns() {
     return 1
   fi
   command -v resolvectl >/dev/null || { fail 'resolvectl peyda nashod'; return 1; }
-  local server
+  local server snapshot staged
   local -a addresses
   [[ "$servers" =~ ^[0-9a-fA-F:.]+(\ [0-9a-fA-F:.]+)*$ ]] || { fail 'DNS address ha namotabar hastand'; return 1; }
   read -r -a addresses <<< "$servers"
@@ -80,53 +80,93 @@ apply_dns() {
       return 1
     fi
   done
-  warn 'Taghir DNS momken ast session SSH / network ra mokhtal konad.'
-  if [[ ${SRV_AUTO_MODE:-0} != 1 ]]; then confirm 'DNS system taghir konad?' || return 1; fi
+  dns_status
+  info "Proposed resolvers: $servers"
+  confirm 'Apply DNS settings?' || return 1
   install -d -m 755 /etc/systemd/resolved.conf.d || return 1
-  install -d -m 700 "$(backup_dir)/dns" || return 1
-  if [[ -f "$target" ]]; then
-    cp -a "$target" "$(backup_dir)/dns/previous.conf" || return 1
-    printf 'existing\n' > "$(backup_dir)/dns/previous.type" || return 1
-  else
-    printf 'none\n' > "$(backup_dir)/dns/previous.type" || return 1
-    rm -f "$(backup_dir)/dns/previous.conf"
+  install -d -m 700 "$(backup_dir)/dns" "$(state_dir)" || return 1
+  exec 9>"$(state_dir)/dns.lock" || return 1
+  flock -n 9 || { fail 'Another DNS change is in progress.'; return 1; }
+  snapshot=$(dns_snapshot "$target") || return 1
+  staged=$(mktemp "${target%/*}/.srv-helper-dns.XXXXXXXX") || return 1
+  if printf '# Managed by SRV Helper.\n[Resolve]\nDNS=%s\nFallbackDNS=\nDomains=~.\n' "$servers" > "$staged" &&
+     chmod 644 "$staged" && mv -fT -- "$staged" "$target" && dns_validate; then
+    success "DNS profile applied: $profile"
+    info "Backup: $snapshot"
+    dns_status
+    return 0
   fi
-  if cat > "$target" <<EOF2
-# Managed by SRV Helper. Remove/restore from menu to return to previous resolver.
-[Resolve]
-DNS=$servers
-FallbackDNS=
-Domains=~.
-EOF2
-  then
-    if systemctl restart systemd-resolved && timeout 8 resolvectl query example.com >/dev/null 2>&1; then
-      success 'DNS set shod. Baraye check: resolvectl status'
-      warn 'Link-specific DHCP DNS momken ast priority motefavet dashte bashad.'
-      return 0
-    fi
-  fi
-  fail 'Zakhire ya test DNS fail shod; dar hale rollback'
-  restore_dns_unchecked || fail 'DNS rollback fail shod'
+  rm -f -- "$staged"
+  fail 'DNS validation failed. Restoring the previous profile.'
+  restore_dns_unchecked "$snapshot" || fail "DNS rollback incomplete: $snapshot"
   return 1
+)
+
+dns_validate() {
+  systemctl restart systemd-resolved &&
+    timeout 8 resolvectl query example.com >/dev/null 2>&1 &&
+    timeout 8 getent ahosts example.com >/dev/null 2>&1
+}
+
+dns_snapshot() {
+  local target=$1 backup
+  backup=$(mktemp -d "$(backup_dir)/dns/change-$(date -u +%Y%m%dT%H%M%SZ).XXXXXXXX") || return 1
+  if [[ -e "$target" || -L "$target" ]]; then
+    cp -aT -- "$target" "$backup/previous.conf" || return 1
+    printf 'existing\n' > "$backup/previous.type" || return 1
+  else
+    printf 'none\n' > "$backup/previous.type" || return 1
+  fi
+  printf '%s\n' "$backup"
 }
 
 restore_dns_unchecked() {
-  local backup="$(backup_dir)/dns" target='/etc/systemd/resolved.conf.d/90-srv-helper.conf' typ
+  local backup=$1 target='/etc/systemd/resolved.conf.d/90-srv-helper.conf' typ
   [[ -f "$backup/previous.type" ]] || return 1
   IFS= read -r typ < "$backup/previous.type"
   case "$typ" in
-    existing) cp -a "$backup/previous.conf" "$target" || return 1 ;;
-    none) rm -f "$target" || return 1 ;;
+    existing) cp -aT -- "$backup/previous.conf" "$target" || return 1 ;;
+    none) rm -f -- "$target" || return 1 ;;
     *) return 1 ;;
   esac
-  systemctl restart systemd-resolved
+  dns_validate
 }
-restore_dns() {
+
+restore_dns() (
   need_root || return 1
-  [[ -f "$(backup_dir)/dns/previous.type" ]] || { fail 'DNS backup peyda nashod'; return 1; }
-  confirm 'DNS ghabli restore shavad?' || return 1
-  if restore_dns_unchecked; then success 'DNS restore shod'; else fail 'DNS restore fail shod'; fi
-}
+  local root="$(backup_dir)/dns" snapshot backup choice index=0 current
+  local -a options=() snapshots=()
+  [[ -d "$root" ]] || { fail 'No DNS backup found.'; return 1; }
+  install -d -m 700 "$(state_dir)" || return 1
+  exec 9>"$(state_dir)/dns.lock" || return 1
+  flock -n 9 || { fail 'Another DNS change is in progress.'; return 1; }
+  while IFS= read -r backup; do
+    [[ -f "$backup/previous.type" ]] || continue
+    index=$((index+1))
+    snapshots+=("$backup")
+    options+=("$index" "${backup##*/}")
+    ((index < 10)) || break
+  done < <(find "$root" -maxdepth 1 -type d -name 'change-*' | LC_ALL=C sort -r)
+  if [[ -f "$root/previous.type" ]]; then
+    index=$((index+1))
+    snapshots+=("$root")
+    options+=("$index" 'Legacy DNS backup')
+  fi
+  ((index)) || { fail 'No DNS backup found.'; return 1; }
+  choose_menu choice 'RESTORE DNS PROFILE' '' "${options[@]}" 0 'Cancel' || return
+  [[ "$choice" =~ ^[1-9][0-9]?$ ]] && ((choice <= index)) || return 1
+  snapshot=${snapshots[choice-1]}
+  confirm "Restore ${snapshot##*/}?" || return 1
+  current=$(dns_snapshot /etc/systemd/resolved.conf.d/90-srv-helper.conf) || return 1
+  if restore_dns_unchecked "$snapshot"; then
+    success 'DNS profile restored.'
+    dns_status
+  else
+    fail 'DNS restore failed validation.'
+    restore_dns_unchecked "$current" || fail "DNS rollback incomplete: $current"
+    return 1
+  fi
+)
 
 ensure_dig() {
   command -v dig >/dev/null 2>&1 && return 0

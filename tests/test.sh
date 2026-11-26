@@ -166,6 +166,37 @@ ranking=$(rank_mirrors test jammy 2>/dev/null)
   if select_ranked_mirror selected iran noble ubuntu <<< '0' >/dev/null; then exit 1; fi
 )
 
+# APT planning includes active pockets and leaves unrelated or disabled stanzas alone.
+(
+  tmp=$(mktemp -d)
+  trap 'rm -rf -- "$tmp"' EXIT
+  apt_source_files() { printf '%s\n' "$tmp/custom.sources" "$tmp/custom.list"; }
+  state_dir() { printf '%s/state\n' "$tmp"; }
+  cat > "$tmp/custom.sources" <<'SOURCES'
+Types: deb
+URIs: https://archive.ubuntu.com/ubuntu/
+Suites: noble
+ noble-updates
+Components: main
+
+Types: deb
+URIs: https://security.ubuntu.com/ubuntu/
+Suites: noble-security
+
+Types: deb
+URIs: https://archive.ubuntu.com/ubuntu/
+Suites: noble-proposed
+Enabled: no
+SOURCES
+  printf '%s\n' 'deb [signed-by=/usr/share/keyrings/test.gpg] https://archive.ubuntu.com/ubuntu noble-backports main # example' > "$tmp/custom.list"
+  [[ "$(apt_archive_plan ubuntu --suites)" == $'noble\nnoble-backports\nnoble-updates' ]]
+  apt_archive_plan ubuntu --apply 'https://mirror.example/ubuntu'
+  grep -Fx 'URIs: https://mirror.example/ubuntu' "$tmp/custom.sources" >/dev/null
+  grep -Fx 'URIs: https://security.ubuntu.com/ubuntu/' "$tmp/custom.sources" >/dev/null
+  grep -Fx 'URIs: https://archive.ubuntu.com/ubuntu/' "$tmp/custom.sources" >/dev/null
+  grep -Fx 'deb [signed-by=/usr/share/keyrings/test.gpg] https://mirror.example/ubuntu noble-backports main # example' "$tmp/custom.list" >/dev/null
+)
+
 # The real menu must accept the reported hostname and reach the validation-method screen.
 ssl_menu_output=$(printf '1\n1\npl24.pingyar.com\nback\n0\n0\n' | env NO_COLOR=1 NO_CLEAR=1 bash "$home/srv-helper.sh" 2>&1)
 [[ "$ssl_menu_output" == *'RAVESH TAEED DOMAIN'* ]]

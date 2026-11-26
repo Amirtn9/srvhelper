@@ -4,7 +4,7 @@ set -o pipefail
 umask 027
 SRV_HOME="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 SRV_VERSION="1.0.0"
-for module in ui certs mirrors dns system maintenance tunnels automation; do
+for module in ui certs mirrors dns system maintenance tunnels automation doctor; do
   # shellcheck source=/dev/null
   source "$SRV_HOME/lib/${module}.sh"
 done
@@ -41,6 +41,7 @@ main_menu() {
       2 'Shabake: DNS va Mirror APT' \
       3 'Khadamat Server' \
       4 'Abzar System' \
+      5 'Server Doctor (read-only)' \
       0 'Khorooj'; rc=$?
     if ((rc==20)); then SRV_BACK_REQUESTED=0; continue; fi
     ((rc==0)) || return 0
@@ -49,6 +50,7 @@ main_menu() {
       2) network_tools_menu ;;
       3) server_services_menu ;;
       4) system_menu ;;
+      5) server_doctor; pause ;;
       0|exit|quit) return 0 ;;
       *) warn 'Gozine namotabar'; pause ;;
     esac
@@ -59,8 +61,9 @@ main_menu() {
 
 case "${1:-}" in
   --help|-h)
-    printf 'SRV Helper %s\nUsage: sudo srv-helper [--help|--version]\n' "$SRV_VERSION"
+    printf 'SRV Helper %s\nUsage: sudo srv-helper [--help|--version|--doctor]\n' "$SRV_VERSION"
     ;;
+  --doctor) server_doctor ;;
   --version|-v) printf 'SRV Helper %s\n' "$SRV_VERSION" ;;
   '') main_menu ;;
   *) printf 'Argument namotabar: %s\n' "$1" >&2; exit 2 ;;

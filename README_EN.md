@@ -8,6 +8,10 @@
 - Version: `1.0.0`
 - Supported systems: Ubuntu and Debian (some tools require systemd)
 
+## Server Doctor
+
+Run `srv-helper --doctor` for a read-only report on disk space, DNS resolution, IPv4 and IPv6 routing, cached APT metadata, SSH activation, and certificate expiry. The report omits hostnames, IP addresses, and certificate domain names.
+
 ## Main sections
 
 ### 1. SSL & Certificates

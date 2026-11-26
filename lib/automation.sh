@@ -69,7 +69,7 @@ smart_auto_optimize() {
     dns_servers="$dns_first"
     [[ "$dns_second" != "$dns_first" ]] && dns_servers+=" $dns_second"
     info "DNS haye entekhab-shode: $dns_servers"
-    SRV_AUTO_MODE=1 apply_dns "Smart-${region^^}" "$dns_servers" && dns_state='SET SHOD' || dns_state='NAMOVAFAGH / RAD SHOD'
+    apply_dns "Smart-${region^^}" "$dns_servers" && dns_state='SET SHOD' || dns_state='NAMOVAFAGH / RAD SHOD'
   else
     warn 'DNS pasokhgo peyda nashod.'
     dns_state='DNS JAVABGO PEYDA NASHOD'
@@ -81,7 +81,7 @@ smart_auto_optimize() {
   case "$os_id" in ubuntu) family=ubuntu ;; debian) family=debian ;; *) family='' ;; esac
   if [[ -n "$family" && -n "$code" ]] && select_ranked_mirror mirror "$region" "$code" "$family"; then
     info "Mirror selected: $mirror"
-    if apply_mirror "$mirror"; then update_state='UPDATE BA MIRROR ENTEKHAB-SHODE MOVAFAGH'; else update_state='MIRROR FAIL SHOD / ROLLBACK ANJAM SHOD'; fi
+    if apply_mirror "$mirror"; then update_state='UPDATE BA MIRROR ENTEKHAB-SHODE MOVAFAGH'; else update_state='MIRROR CHANGE FAILED OR CANCELLED'; fi
   else
     [[ ${SRV_BACK_REQUESTED:-0} == 1 || ${SRV_EXIT_REQUESTED:-0} == 1 ]] && return 0
     info 'Mirror change skipped.'

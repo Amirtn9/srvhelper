@@ -1,0 +1,37 @@
+name: Test SRV Helper
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ['ubuntu:24.04', 'ubuntu:26.04', 'debian:13']
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test on ${{ matrix.image }}
+        run: |
+          docker run --rm -v "$PWD:/src:ro" -w /src "${{ matrix.image }}" bash -euc '
+            apt-get -qq update
+            apt-get -qq install -y ca-certificates curl iproute2 python3 python3-pexpect openssl
+            LC_ALL=C bash tests/test.sh
+            bash install.sh --check
+            bash srv-helper.sh --doctor
+            python3 tests/test_terminal.py
+            bash install.sh --yes
+            bash install.sh --yes
+            test "$(srv-helper --version)" = "SRV Helper 1.0.0"
+            scratch=$(mktemp -d)
+            cp -r install.sh lib hooks "$scratch/"
+            printf "%s\n" "exit 42" > "$scratch/srv-helper.sh"
+            if bash "$scratch/install.sh" --yes; then exit 1; fi
+            test "$(srv-helper --version)" = "SRV Helper 1.0.0"
+            cmp hooks/srv-helper-deploy.sh /etc/letsencrypt/renewal-hooks/deploy/srv-helper-deploy
+          '

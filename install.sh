@@ -6,7 +6,7 @@ archive_url='https://github.com/Amirtn9/srvhelper/archive/refs/heads/main.tar.gz
 app='/opt/srv-helper'
 wrapper='/usr/local/bin/srv-helper'
 hook='/etc/letsencrypt/renewal-hooks/deploy/srv-helper-deploy'
-files=(srv-helper.sh lib/{ui,certs,mirrors,dns,system,maintenance,tunnels,automation}.sh hooks/srv-helper-deploy.sh)
+files=(srv-helper.sh lib/{ui,certs,mirrors,dns,system,maintenance,tunnels,automation,doctor}.sh hooks/srv-helper-deploy.sh)
 yes=0 check=0 launch=0 tty=0
 accent='' green='' red='' reset=''
 work='' stage='' backup='' wrapper_stage='' hook_stage=''

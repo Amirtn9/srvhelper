@@ -71,26 +71,31 @@ mirror_candidates() {
   esac
 }
 mirror_probe() (
-  local url=$1 codename=$2 architecture file seconds
+  local url=$1 codename=$2 architecture file seconds rate transfer
   [[ "$codename" =~ ^[a-z0-9-]+$ ]] || return 1
   architecture=$(dpkg --print-architecture) || return 1
   file=$(mktemp) || return 1
   trap 'rm -f -- "$file"' EXIT
-  seconds=$(curl --fail --silent --show-error --location --proto '=http,https' \
+  transfer=$(curl --fail --silent --show-error --location --proto '=http,https' \
     --proto-redir '=http,https' --connect-timeout 3 --max-time 10 --max-filesize 2097152 \
-    -o "$file" -w '%{time_total}' "${url%/}/dists/$codename/Release" 2>/dev/null) || return 1
+    -o "$file" -w '%{time_total} %{speed_download}' "${url%/}/dists/$codename/Release" 2>/dev/null) || return 1
+  read -r seconds rate <<< "$transfer"
   LC_ALL=C awk -v code="$codename" -v arch="$architecture" '
     $1 == "Codename:" && $2 == code { codename = 1 }
+    $1 == "Suite:" && $2 == code { suite = 1 }
     $1 == "Architectures:" {
       for (i = 2; i <= NF; i++) if ($i == arch) architecture = 1
     }
-    END { exit !(codename && architecture) }
+    END { exit !((codename || suite) && architecture) }
   ' "$file" || return 1
   printf '%s' "$seconds"
+  if [[ ${3:-} == --details ]]; then printf '|%s' "$rate"; fi
 )
 rank_mirrors() {
-  local region=$1 codename=$2 family=${3:-ubuntu} url seconds i=0 jobfile
-  local tmp
+  local region=$1 codename=$2 family=${3:-ubuntu} url seconds probe rate i=0 jobfile
+  local tmp required suite
+  required=$(apt_archive_plan "$family" --suites) || return 1
+  [[ -n "$required" ]] || required=$codename
   tmp=$(mktemp -d /tmp/srv-helper-mirrors.XXXXXXXX) || return 1
   section "TEST SORAT MIRROR | ${region^^}" >&2
   info 'Mirror ha ba 6 worker be surat parallel check mishavand...' >&2
@@ -99,8 +104,13 @@ rank_mirrors() {
   for url in "${mirrors[@]}"; do
     # Each child writes to its own file, so output cannot interleave.
     (
-      if seconds=$(mirror_probe "$url" "$codename"); then
-        printf '%s|%s\n' "$seconds" "$url" > "$tmp/$i.ok"
+      if probe=$(mirror_probe "$url" "$codename" --details); then
+        IFS='|' read -r seconds rate <<< "$probe"
+        while IFS= read -r suite; do
+          [[ "$suite" == "$codename" ]] && continue
+          mirror_probe "$url" "$suite" >/dev/null || exit 1
+        done <<< "$required"
+        printf '%s|%s%s\n' "$seconds" "$url" "${rate:+|$rate}" > "$tmp/$i.ok"
       else
         printf '%s\n' "$url" > "$tmp/$i.fail"
       fi
@@ -128,18 +138,23 @@ rank_mirrors() {
 
 select_ranked_mirror() {
   local destination=$1 region=$2 code=$3 family=$4 ranking
-  local seconds url label index choice
+  local seconds url rate label index choice
   local -a entries=() options=()
   ranking=$(rank_mirrors "$region" "$code" "$family") || return 1
-  while IFS='|' read -r seconds url; do
+  while IFS='|' read -r seconds url rate; do
     index=$((${#entries[@]} + 1))
     label=$(LC_ALL=C awk -v seconds="$seconds" 'BEGIN {printf "%5.0f ms", seconds * 1000}')
     entries+=("$url")
-    options+=("$index" "$label  |  $url")
+    if [[ "$rate" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+      rate=$(LC_ALL=C awk -v rate="$rate" 'BEGIN {printf " | %5.0f KiB/s", rate / 1024}')
+    else
+      rate=''
+    fi
+    options+=("$index" "$label$rate  |  $url")
     ((index < 10)) || break
   done <<< "$ranking"
   local heading
-  printf -v heading '\n  %s%s / %s / %s%s\n         %sFETCH TIME | MIRROR%s' "$DIM" "${region^^}" "$family" "$code" "$RESET" "$C1" "$RESET"
+  printf -v heading '\n  %s%s / %s / %s%s\n         %sRELEASE SAMPLE (TIME / RATE) | MIRROR%s' "$DIM" "${region^^}" "$family" "$code" "$RESET" "$C1" "$RESET"
   choose_menu choice 'SELECT AN APT MIRROR' "$heading" \
     "${options[@]}" 0 'Skip mirror change' || return $?
   if [[ ! "$choice" =~ ^([1-9]|10)$ ]] || ((choice > ${#entries[@]})); then
@@ -148,38 +163,24 @@ select_ranked_mirror() {
   fi
   printf -v "$destination" '%s' "${entries[choice-1]}"
 }
-apt_source_files() {
-  local os_id
-  os_id=$(. /etc/os-release 2>/dev/null; printf '%s' "${ID:-unknown}")
-  [[ -f /etc/apt/sources.list ]] && printf '%s\n' /etc/apt/sources.list
-  if [[ "$os_id" == ubuntu && -f /etc/apt/sources.list.d/ubuntu.sources ]]; then
-    printf '%s\n' /etc/apt/sources.list.d/ubuntu.sources
-  elif [[ "$os_id" == debian && -f /etc/apt/sources.list.d/debian.sources ]]; then
-    printf '%s\n' /etc/apt/sources.list.d/debian.sources
-  fi
-}
-apply_mirror() {
-  local new=$1 old='' bdir timestamp file os_id family known
-  need_root && need_cmd python3 && need_cmd apt-get || return 1
-  os_id=$(. /etc/os-release 2>/dev/null; printf '%s' "${ID:-unknown}")
-  case "$os_id" in ubuntu) family=ubuntu ;; debian) family=debian ;; *) fail 'Mirror auto faghat Ubuntu/Debian ra poshtibani mikonad'; return 1 ;; esac
-  [[ "$new" =~ ^https?://[a-zA-Z0-9.-]+(/[a-zA-Z0-9._/-]+)?$ ]] || { fail 'URL namotabar'; return 1; }
-  local state='/var/lib/srv-helper/last-mirror'
-  [[ -r "$state" ]] && IFS= read -r old < "$state"
-  timestamp=$(date -u +'%Y%m%dT%H%M%SZ')
-  bdir="$(backup_dir)/apt-$timestamp-$$"
-  install -d -m 700 "$bdir" || return 1
+apt_source_files() (
+  shopt -s nullglob
+  local file
+  for file in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+    [[ -f "$file" && ! -L "$file" ]] && printf '%s\n' "$file"
+  done
+  return 0
+)
+
+apt_archive_plan() {
+  local family=$1 mode=$2 new=${3:-} old='' known
   local -a files=()
-  while IFS= read -r file; do
-    files+=("$file")
-    cp -a -- "$file" "$bdir/$(basename "$file")" || return 1
-  done < <(apt_source_files)
-  if ((${#files[@]} == 0)); then fail 'Ubuntu APT source peyda nashod'; return 1; fi
+  [[ ! -r "$(state_dir)/last-mirror" ]] || IFS= read -r old < "$(state_dir)/last-mirror"
   known=$(mirror_candidates iran "$family") || return 1
-  # Match distro archives known to SRV Helper, including preconfigured local mirrors.
-  if ! python3 - "$new" "$old" "$family" "$known" "${files[@]}" <<'PY'
-import pathlib, re, sys
-new, old, family, known, *files = sys.argv[1:]
+  mapfile -t files < <(apt_source_files)
+  python3 - "$mode" "$new" "$old" "$family" "$known" "${files[@]}" <<'PYCODE'
+import os, pathlib, re, sys, tempfile
+mode, new, old, family, known, *files = sys.argv[1:]
 # Exclude dedicated security archives and unrelated third-party repositories.
 if family == "ubuntu":
     base = r'https?://(?:[a-z0-9-]+\.)*archive\.ubuntu\.com/ubuntu/?|https?://ports\.ubuntu\.com/ubuntu-ports/?'
@@ -189,61 +190,185 @@ for url in [*known.splitlines(), old]:
     if url.startswith(("http://", "https://")):
         base += r"|https?://" + re.escape(url.split("://", 1)[1].rstrip("/")) + r"/?"
 pattern = re.compile(r"(?:" + base + r")(?=\s|$)", re.I)
-changes = 0
+def transform(original, deb822):
+    suites = set()
+    archives = set()
+    if not deb822:
+        result = []
+        for line in original.splitlines(keepends=True):
+            source, comment, trailing = line.partition("#")
+            fields = re.match(r"^\s*deb(?:-src)?\s+(?:\[[^]]*\]\s+)?(\S+)\s+(\S+)", source)
+            if fields and pattern.fullmatch(fields[1]):
+                suites.add(fields[2])
+                archives.add(fields[1])
+                source = source[:fields.start(1)] + new + source[fields.end(1):]
+            result.append(source + comment + trailing)
+        return "".join(result), suites, archives
+
+    result = []
+    for stanza in re.split(r"(\r?\n[ \t]*\r?\n)", original):
+        fields = {}
+        for field in re.finditer(r"^([\w-]+):[ \t]*(.*(?:\n[ \t]+[^\n]+)*)", stanza, re.M):
+            fields[field[1].lower()] = field
+        uris = fields.get("uris")
+        enabled = fields.get("enabled")
+        if uris and "suites" in fields and not (enabled and enabled[2].strip().lower() == "no"):
+            matches = [uri for uri in uris[2].split() if pattern.fullmatch(uri)]
+            if matches:
+                suites.update(fields["suites"][2].split())
+                archives.update(matches)
+                replacement = re.sub(r"\S+", lambda token: new if pattern.fullmatch(token[0]) else token[0], uris[2])
+                stanza = stanza[:uris.start(2)] + replacement + stanza[uris.end(2):]
+        result.append(stanza)
+    return "".join(result), suites, archives
+
+all_suites = set()
+all_archives = set()
+matched = False
 for name in files:
     path = pathlib.Path(name)
     original = path.read_text()
-    lines = original.splitlines(keepends=True)
-    if path.suffix == ".sources":
-        for index, line in enumerate(lines):
-            if re.match(r"^URIs:\s", line, re.I):
-                lines[index] = pattern.sub(new, line)
-    else:
-        for index, line in enumerate(lines):
-            if re.match(r"^\s*deb(?:-src)?\s", line):
-                source, comment, trailing = line.partition("#")
-                lines[index] = pattern.sub(new, source) + comment + trailing
-    updated = "".join(lines)
-    if updated != original:
-        path.write_text(updated)
-        changes += 1
-if not changes:
-    print('Official archive URL dar APT source peyda nashod; changes=0', file=sys.stderr)
-    sys.exit(3)
-PY
-  then
-    for file in "${files[@]}"; do cp -a -- "$bdir/$(basename "$file")" "$file"; done
-    fail 'Mirror taghir nakard; config ghabli hefz shod'; return 1
-  fi
-  info 'APT update test dar hale ejra ...'
-  if DEBIAN_FRONTEND=noninteractive apt-get -o APT::Update::Error-Mode=any update; then
-    install -d -m 700 /var/lib/srv-helper
-    printf '%s\n' "$new" > "$state"
-    chmod 600 "$state"
-    printf '%s\n' "$bdir" > /var/lib/srv-helper/last-apt-backup
-    success "Mirror set shod: $new"
-    success "Backup: $bdir"
+    updated, suites, archives = transform(original, path.suffix == ".sources")
+    if not suites:
+        continue
+    matched = True
+    all_suites.update(suites)
+    all_archives.update(archives)
+    if mode == "--files":
+        print(name)
+    elif mode == "--apply" and updated != original:
+        info = path.stat()
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, prefix=".srv-helper-", delete=False) as handle:
+                temporary = pathlib.Path(handle.name)
+                os.fchown(handle.fileno(), info.st_uid, info.st_gid)
+                os.fchmod(handle.fileno(), info.st_mode & 0o7777)
+                handle.write(updated)
+                handle.flush()
+                os.fsync(handle.fileno())
+            temporary.replace(path)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+if mode == "--suites":
+    print("\n".join(sorted(all_suites)), end="\n" if all_suites else "")
+elif mode == "--archives":
+    print(", ".join(sorted(all_archives)))
+elif mode == "--apply" and not matched:
+    sys.exit("No matching APT archives")
+PYCODE
+}
+
+restore_apt_files() {
+  local backup=$1 saved target failed=0
+  shift
+  if (($#)); then
+    for target; do cp -aT -- "$backup$target" "$target" || failed=1; done
   else
-    for file in "${files[@]}"; do cp -a -- "$bdir/$(basename "$file")" "$file"; done
-    fail 'APT update fail shod; source ha automatic restore shodand'
-    return 1
+    while IFS= read -r -d '' saved; do
+      target=${saved#"$backup"}
+      cp -aT -- "$saved" "$target" || failed=1
+    done < <(find "$backup/etc/apt" -type f -print0)
   fi
+  ((failed == 0))
 }
-restore_mirror() {
+
+apply_mirror() (
+  local new=$1 bdir os_id family paths required suite file state_staged current
+  need_root && need_cmd python3 && need_cmd apt-get || return 1
+  os_id=$(. /etc/os-release; printf '%s' "${ID:-}")
+  case "$os_id" in ubuntu|debian) family=$os_id ;; *) fail 'Only Ubuntu and Debian are supported.'; return 1 ;; esac
+  [[ "$new" =~ ^https?://[a-zA-Z0-9.-]+(/[a-zA-Z0-9._/-]+)?$ ]] || return 1
+  install -d -m 700 "$(state_dir)" "$(backup_dir)" || return 1
+  exec 9>"$(state_dir)/apt.lock" || return 1
+  flock -n 9 || { fail 'Another APT change is in progress.'; return 1; }
+  paths=$(apt_archive_plan "$family" --files) || return 1
+  required=$(apt_archive_plan "$family" --suites) || return 1
+  [[ -n "$paths" && -n "$required" ]] || { fail 'No supported active APT archive found.'; return 1; }
+  while IFS= read -r suite; do
+    mirror_probe "$new" "$suite" >/dev/null || { fail "Missing compatible suite: $suite"; return 1; }
+  done <<< "$required"
+  section 'APT CHANGE PREVIEW'
+  printf '  %s\n' "$paths"
+  current=$(apt_archive_plan "$family" --archives) || return 1
+  info "Current archives: $current"
+  info "New archive: $new"
+  info "Verified suites: ${required//$'\n'/, }"
+  confirm 'Apply this APT mirror?' || return 1
+  bdir=$(mktemp -d "$(backup_dir)/apt-$(date -u +%Y%m%dT%H%M%SZ).XXXXXXXX") || return 1
+  local -a files=()
+  mapfile -t files <<< "$paths"
+  for file in "${files[@]}"; do cp -a --parents -- "$file" "$bdir" || return 1; done
+  [[ ! -f "$(state_dir)/last-mirror" ]] || cp -a "$(state_dir)/last-mirror" "$bdir/previous-mirror" || return 1
+  state_staged=$(mktemp "$(state_dir)/.last-mirror.XXXXXXXX") || return 1
+  apt_rollback() {
+    local rc=$?
+    trap - EXIT
+    rm -f -- "$state_staged"
+    if restore_apt_files "$bdir" "${files[@]}"; then
+      fail 'APT change failed. Source files restored.'
+    else
+      fail "APT rollback incomplete: $bdir"
+    fi
+    exit "$rc"
+  }
+  trap apt_rollback EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  printf '%s\n' "$new" > "$state_staged" || return 1
+  apt_archive_plan "$family" --apply "$new" || return 1
+  info 'Running APT update with signature verification...'
+  DEBIAN_FRONTEND=noninteractive apt-get -o APT::Update::Error-Mode=any update || return 1
+  mv -fT -- "$state_staged" "$(state_dir)/last-mirror" || return 1
+  trap - EXIT INT TERM
+  success "Mirror: $new"
+  success "Backup: $bdir"
+)
+
+restore_mirror() (
   need_root || return 1
-  local pointer='/var/lib/srv-helper/last-apt-backup' backup file original
-  if [[ ! -r "$pointer" ]]; then fail 'Backup sabt nashode'; return 1; fi
-  IFS= read -r backup < "$pointer"
-  [[ "$backup" == /var/backups/srv-helper/apt-* && -d "$backup" ]] || { fail 'Backup namotabar'; return 1; }
-  confirm "APT source ha az $backup restore shavand?" || return 1
-  for original in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list.d/debian.sources; do
-    file="$backup/$(basename "$original")"
-    [[ -f "$file" ]] && cp -a -- "$file" "$original"
-  done
-  rm -f /var/lib/srv-helper/last-mirror /var/lib/srv-helper/last-apt-backup
-  DEBIAN_FRONTEND=noninteractive apt-get -o APT::Update::Error-Mode=any update || warn 'APT update bad az restore fail shod'
-  success 'Mirror restore shod'
-}
+  local backup selected name pointer="$(state_dir)/last-apt-backup"
+  local -a options=() backups=()
+  local index=0
+  [[ -d "$(state_dir)" ]] || { fail 'No APT backup found.'; return 1; }
+  exec 9>"$(state_dir)/apt.lock" || return 1
+  flock -n 9 || { fail 'Another APT change is in progress.'; return 1; }
+  while IFS= read -r backup; do
+    [[ -d "$backup/etc/apt" ]] || continue
+    index=$((index+1))
+    backups+=("$backup")
+    options+=("$index" "${backup##*/}")
+    ((index < 10)) || break
+  done < <(find "$(backup_dir)" -maxdepth 1 -type d -name 'apt-*' 2>/dev/null | LC_ALL=C sort -r)
+  if [[ -r "$pointer" ]] && IFS= read -r backup < "$pointer" &&
+     [[ "$backup" == "$(backup_dir)"/apt-* && -d "$backup" && ! -d "$backup/etc/apt" ]]; then
+    index=$((index+1))
+    backups+=("$backup")
+    options+=("$index" 'Legacy APT backup')
+  fi
+  (("${#backups[@]}")) || { fail 'No APT backup found.'; return 1; }
+  choose_menu selected 'RESTORE APT SOURCES' '' "${options[@]}" 0 'Cancel' || return
+  [[ "$selected" =~ ^[1-9][0-9]?$ ]] && ((selected <= index)) || return 1
+  backup=${backups[selected-1]}
+  confirm "Restore APT sources from ${backup##*/}?" || return 1
+  if [[ -d "$backup/etc/apt" ]]; then
+    restore_apt_files "$backup" || { fail "APT restore incomplete: $backup"; return 1; }
+  else
+    for name in /etc/apt/sources.list /etc/apt/sources.list.d/{ubuntu,debian}.sources; do
+      if [[ -f "$backup/${name##*/}" ]]; then cp -aT -- "$backup/${name##*/}" "$name" || return 1; fi
+    done
+  fi
+  if [[ -f "$backup/previous-mirror" ]]; then
+    cp -a "$backup/previous-mirror" "$(state_dir)/last-mirror" || return 1
+  else
+    rm -f -- "$(state_dir)/last-mirror" || return 1
+  fi
+  DEBIAN_FRONTEND=noninteractive apt-get -o APT::Update::Error-Mode=any update ||
+    { fail 'APT sources restored, but APT update failed.'; return 1; }
+  success 'APT sources restored and package indexes refreshed.'
+)
+
 mirror_menu() {
   local choice region code selected validated family os_id
   os_id=$(. /etc/os-release; printf '%s' "${ID:-unknown}")
@@ -280,6 +405,6 @@ mirror_menu() {
     select_ranked_mirror selected "$region" "$code" "$family" || return
   fi
   warn 'Source haye APT taghir mikonand. Backup khodkar gerefte mishavad.'
-  if confirm "Mirror $selected set shavad?"; then apply_mirror "$selected"; fi
+  apply_mirror "$selected"
   pause
 }

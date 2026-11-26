@@ -231,49 +231,89 @@ clamav_menu() {
   done
 }
 
-ssh_add_port_safely() {
-  local port cfg='/etc/ssh/sshd_config' backup svc old_port
+ssh_add_port_safely() (
+  local port cfg='/etc/ssh/sshd_config' backup svc old_port staged config
+  local firewall_added=''
   local -a current_ports=()
   need_root && need_cmd sshd && need_cmd ss && need_cmd systemctl || return 1
-  prompt 'SSH port jadid (1024-65535; port ghabli baz mimanad)' port || return 1
-  if ! [[ "$port" =~ ^[0-9]+$ ]] || ((10#$port<1024 || 10#$port>65535)); then fail 'Port bayad 1024 ta 65535 bashad'; return 1; fi
-  port=$((10#$port))
-  if ss -H -ltn "sport = :$port" 2>/dev/null | grep -q .; then fail 'In port dar hale listen ast'; return 1; fi
-  [[ -f "$cfg" ]] || { fail 'sshd_config peyda nashod'; return 1; }
-  mapfile -t current_ports < <(sshd -T 2>/dev/null | awk '$1=="port" && $2 ~ /^[0-9]+$/ {print $2}' | sort -un)
-  ((${#current_ports[@]}>0)) || current_ports=(22)
-  backup="$(backup_dir)/sshd_config.$(date -u +%Y%m%dT%H%M%SZ).bak"
-  install -d -m 700 "$(backup_dir)"
-  cp -a "$cfg" "$backup" || return 1
-  if grep -Eiq "^[[:space:]]*Port[[:space:]]+$port([[:space:]]|$)" "$cfg" /etc/ssh/sshd_config.d/*.conf 2>/dev/null; then
-    warn 'In port dar config sshd vojood darad'; return 1
-  fi
-  {
-    printf '\n# Added by SRV Helper. Existing SSH ports are kept until the new connection is verified.\n'
-    for old_port in "${current_ports[@]}"; do printf 'Port %s\n' "$old_port"; done
-    printf 'Port %s\n' "$port"
-  } >> "$cfg"
-  if ! sshd -t -f "$cfg"; then cp -a "$backup" "$cfg"; fail 'SSH config invalid bood; rollback shod'; return 1; fi
-  if command -v ufw >/dev/null 2>&1; then
-    ufw allow "$port/tcp" || { cp -a "$backup" "$cfg"; return 1; }
-  elif command -v firewall-cmd >/dev/null 2>&1; then
-    firewall-cmd --permanent --add-port="$port/tcp" && firewall-cmd --reload || { cp -a "$backup" "$cfg"; return 1; }
-  else warn 'Firewall detect nashod; port jadid ro dar firewall provider baz konid.'; fi
-  if systemctl list-unit-files --no-legend 2>/dev/null | grep -q '^ssh.service'; then svc=ssh; else svc=sshd; fi
-  if ! systemctl reload "$svc"; then
-    cp -a "$backup" "$cfg"; systemctl reload "$svc" 2>/dev/null || :
-    fail 'SSH reload fail shod; config rollback shod'; return 1
-  fi
-  sleep 1
-  if ss -H -ltn "sport = :$port" 2>/dev/null | grep -q .; then
-    success "SSH dar port $port ham listen mikonad. Port ghabli hanooz dar config hast."
-    info 'Aval ba port jadid vasl shodan ra test konid; port ghabli ra faghat ba session jadid bebandid.'
-  else
-    cp -a "$backup" "$cfg"; systemctl reload "$svc" 2>/dev/null || :
-    warn 'Port jadid dar ss peyda nashod; config rollback shod. Port ghabli ra dast nazanid.'
+  if systemctl is-active --quiet ssh.socket || systemctl is-active --quiet sshd.socket; then
+    warn 'SSH uses socket activation. Port changes from this menu are unavailable in that mode.'
     return 1
   fi
-}
+  prompt 'Additional SSH port (1024-65535)' port || return 1
+  if ! [[ "$port" =~ ^[0-9]{4,5}$ ]] || ((10#$port<1024 || 10#$port>65535)); then
+    fail 'Enter a port between 1024 and 65535.'
+    return 1
+  fi
+  port=$((10#$port))
+  install -d -m 700 "$(state_dir)" "$(backup_dir)" || return 1
+  exec 9>"$(state_dir)/ssh.lock" || return 1
+  flock -n 9 || { fail 'Another SSH change is in progress.'; return 1; }
+  if ss -H -ltn "sport = :$port" 2>/dev/null | grep . >/dev/null; then fail 'This port is already listening.'; return 1; fi
+  [[ -f "$cfg" && ! -L "$cfg" ]] || { fail 'Expected a regular sshd_config file.'; return 1; }
+  config=$(sshd -T) || return 1
+  mapfile -t current_ports < <(awk '$1=="port" && $2 ~ /^[0-9]+$/ {print $2}' <<< "$config" | sort -un)
+  (("${#current_ports[@]}")) || { fail 'Could not read current SSH ports.'; return 1; }
+  for old_port in "${current_ports[@]}"; do
+    [[ "$old_port" != "$port" ]] || { warn 'This port is already configured.'; return 1; }
+  done
+  section 'SSH CHANGE PREVIEW'
+  info "Current ports: ${current_ports[*]}"
+  info "Additional port: $port"
+  confirm 'Add this port and keep the existing listeners?' || return 1
+  if systemctl is-active --quiet ssh.service; then svc=ssh.service
+  elif systemctl is-active --quiet sshd.service; then svc=sshd.service
+  else fail 'No active SSH service found.'; return 1; fi
+
+  backup=$(mktemp "$(backup_dir)/sshd_config.XXXXXXXX") || return 1
+  cp -aT -- "$cfg" "$backup" || return 1
+  staged=$(mktemp /etc/ssh/.srv-helper-sshd.XXXXXXXX) || return 1
+  trap 'rm -f -- "$staged"' EXIT
+  {
+    printf '# Additional port managed by SRV Helper.\n'
+    for old_port in "${current_ports[@]}"; do printf 'Port %s\n' "$old_port"; done
+    printf 'Port %s\n' "$port"
+    cat "$cfg"
+  } > "$staged" || return 1
+  chmod --reference="$cfg" "$staged" && chown --reference="$cfg" "$staged" &&
+    sshd -t -f "$staged" || return 1
+
+  if command -v ufw >/dev/null 2>&1 && LC_ALL=C ufw status | grep '^Status: active' >/dev/null; then
+    if ! LC_ALL=C ufw status | awk -v p="$port/tcp" '$1==p && $2=="ALLOW" {found=1} END {exit !found}'; then
+      ufw allow "$port/tcp" || return 1
+      firewall_added=ufw
+    fi
+  elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+    if ! firewall-cmd --permanent --query-port="$port/tcp" >/dev/null; then
+      firewall-cmd --permanent --add-port="$port/tcp" || return 1
+      firewall_added=firewalld
+    fi
+  fi
+
+  if { [[ "$firewall_added" != firewalld ]] || firewall-cmd --reload; } &&
+     mv -fT -- "$staged" "$cfg" && systemctl reload "$svc"; then
+    sleep 1
+    local listener ready=1
+    for listener in "${current_ports[@]}" "$port"; do
+      ss -H -ltn "sport = :$listener" 2>/dev/null | grep . >/dev/null || ready=0
+    done
+    if ((ready)); then
+      success "SSH is listening on the existing ports and $port."
+      info "Backup: $backup"
+      return 0
+    fi
+  fi
+  cp -aT -- "$backup" "$cfg" && systemctl reload "$svc" || fail "SSH rollback incomplete: $backup"
+  case "$firewall_added" in
+    ufw) ufw delete allow "$port/tcp" || fail 'Could not remove the added UFW rule.' ;;
+    firewalld)
+      firewall-cmd --permanent --remove-port="$port/tcp" && firewall-cmd --reload ||
+        fail 'Could not remove the added firewalld rule.'
+      ;;
+  esac
+  fail 'SSH change failed listener verification.'
+  return 1
+)
 
 ssh_audit() {
   banner; section 'BARRASI AMNIAT SSH'
