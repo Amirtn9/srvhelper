@@ -67,3 +67,38 @@ server_doctor() {
     info 'Certificates: no readable Certbot store. Run as root to inspect an existing store.'
   fi
 }
+
+doctor_menu() {
+  local choice
+  while :; do
+    choose_menu choice 'SERVER DOCTOR' '' \
+      1 'Run a read-only health check' \
+      2 'Save a baseline for comparison' \
+      3 'Compare with the saved baseline' \
+      0 'Back' || return $?
+    case "$choice" in
+      1) server_doctor ;;
+      2)
+        # Retain the redacted baseline for this SRV Helper session.
+        SRV_DOCTOR_BASELINE=$(server_doctor)
+        success 'Baseline saved for this session.'
+        ;;
+      3)
+        if [[ -n ${SRV_DOCTOR_BASELINE:-} ]]; then
+          local current difference rc=0
+          current=$(server_doctor)
+          difference=$(diff -u --label Before --label After <(printf '%s\n' "$SRV_DOCTOR_BASELINE") <(printf '%s\n' "$current")) || rc=$?
+          case "$rc" in
+            0) success 'No differences from the baseline.' ;;
+            1) printf '%s\n' "$difference" ;;
+            *) fail 'Could not compare the reports.' ;;
+          esac
+        else warn 'Save a baseline first.'; fi
+        ;;
+      0) return ;;
+      *) warn 'Invalid option.' ;;
+    esac
+    pause
+    [[ $SRV_EXIT_REQUESTED == 0 && $SRV_BACK_REQUESTED == 0 ]] || return 0
+  done
+}

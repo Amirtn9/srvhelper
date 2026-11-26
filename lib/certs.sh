@@ -244,21 +244,26 @@ setup_deploy_hook() {
   chown root:root /etc/srv-helper/deployments.tsv
 }
 
-register_destination() {
+register_destination() (
   local name=$1 dest=$2 group=$3 conf='/etc/srv-helper/deployments.tsv' key path grp tmp
   [[ "$name" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ && "$name" != *'..'* && "$dest" == /* && "$dest" != *$'\t'* && "$dest" != *$'\n'* ]] || return 1
+  exec 9>/etc/srv-helper/registry.lock || return 1
+  flock 9 || return 1
   tmp=$(mktemp /etc/srv-helper/.deployments.XXXXXX) || return 1
-  chmod 600 "$tmp"
+  trap 'rm -f -- "$tmp"' EXIT
+  chmod 600 "$tmp" || return 1
   if [[ -f "$conf" ]]; then
     while IFS=$'\t' read -r key path grp; do
-      [[ "$key" == "$name" ]] || printf '%s\t%s\t%s\n' "$key" "$path" "${grp:-root}" >> "$tmp"
+      if [[ "$key" != "$name" ]]; then
+        printf '%s\t%s\t%s\n' "$key" "$path" "${grp:-root}" >> "$tmp" || return 1
+      fi
     done < "$conf"
   fi
-  printf '%s\t%s\t%s\n' "$name" "$dest" "$group" >> "$tmp"
-  mv -f -- "$tmp" "$conf"
-  RENEWED_LINEAGE="/etc/letsencrypt/live/$name" RENEWED_DOMAINS="$name" \
-    /etc/letsencrypt/renewal-hooks/deploy/srv-helper-deploy
-}
+  printf '%s\t%s\t%s\n' "$name" "$dest" "$group" >> "$tmp" || return 1
+  SRV_DEPLOY_REGISTRY="$tmp" RENEWED_LINEAGE="/etc/letsencrypt/live/$name" RENEWED_DOMAINS="$name" \
+    /etc/letsencrypt/renewal-hooks/deploy/srv-helper-deploy || return 1
+  mv -fT -- "$tmp" "$conf"
+)
 
 execute_job() {
   local mode=$1; shift
@@ -339,6 +344,7 @@ execute_job() {
   info 'Renewal hook ba har tamdid movafagh, certificate ra dobare deploy mikonad.'
   info "Private key group: $DEST_GROUP | Permission: root=600, service group=640"
   pause
+  ((deployed == ${#successes[@]} && ${#failed[@]} == 0))
 }
 
 manual_ssl() {
@@ -381,17 +387,62 @@ smart_ssl_flow() {
   execute_job "$mode" "${domains[@]}"
 }
 
+certificate_health() {
+  need_cmd openssl || return 1
+  local store=${CERT_LIVE_DIR:-/etc/letsencrypt/live} registry='/etc/srv-helper/deployments.tsv'
+  local cert name expiry expiry_epoch days now key destination group sync service
+  local found=0
+  section 'CERTIFICATE HEALTH'
+  [[ -d "$store" && -r "$store" && -x "$store" ]] || { warn 'Certbot store unavailable. Inspect as root.'; return 1; }
+  now=$(date +%s) || return 1
+  printf '  %-34s %9s  %s\n' 'Certificate' 'Expires' 'Deployment'
+  for cert in "$store"/*/fullchain.pem; do
+    [[ -f "$cert" ]] || continue
+    found=1
+    name=${cert%/*}; name=${name##*/}
+    expiry=$(openssl x509 -in "$cert" -noout -enddate 2>/dev/null) || expiry=''
+    expiry_epoch=$(LC_ALL=C date -d "${expiry#notAfter=}" +%s 2>/dev/null) || expiry_epoch=''
+    days='unknown'
+    if [[ -n "$expiry" && -n "$expiry_epoch" ]]; then
+      if ((expiry_epoch < now)); then days='expired'
+      else days="$(((expiry_epoch-now)/86400)) d"; fi
+    fi
+    sync='Not registered'
+    if [[ -e "$registry" && ! -r "$registry" ]]; then sync='Registry unreadable'; fi
+    if [[ -r "$registry" ]]; then
+      while IFS=$'\t' read -r key destination group; do
+        [[ "$key" == "$name" ]] || continue
+        if cmp -s -- "$cert" "$destination/fullchain.pem" && cmp -s -- "${cert%/*}/privkey.pem" "$destination/privkey.pem"; then
+          sync='In sync'
+        else sync='Missing, unreadable, or out of sync'; fi
+        break
+      done < "$registry"
+    fi
+    printf '  %-34s %9s  %s\n' "$name" "$days" "$sync"
+  done
+  if ((!found)); then info 'No certificates found.'; fi
+  service=$(systemctl show certbot.service -p Result -p ExecMainExitTimestamp --no-pager 2>/dev/null) || service=''
+  if [[ "$service" == *'ExecMainExitTimestamp='* && "$service" =~ ExecMainExitTimestamp=[^$'\n']+ ]]; then
+    info 'Last Certbot service run:'
+    printf '  %s\n' "${service//$'\n'/$'\n  '}"
+  else
+    info 'No Certbot service run recorded by systemd.'
+  fi
+}
+
 certificate_dashboard() {
   local choice file
-  if ! command -v certbot >/dev/null 2>&1; then warn 'Hanooz certificate manager nasb nist'; return 1; fi
-  section 'VASIAT CERTIFICATE HA'
-  menu_line 1 'Namayesh certificate ha'
-  menu_line 2 'Test tamdid khodkar'
-  menu_line 3 'Barrasi file certificate'
-  prompt 'Entekhab' choice || return $?
+  choose_menu choice 'CERTIFICATE DASHBOARD' '' \
+    1 'Expiry and deployment status' \
+    2 'Test renewal (dry run)' \
+    3 'Inspect certificate file' \
+    4 'List Certbot certificates' \
+    0 'Back' || return $?
   case "$choice" in
-    1) certbot certificates ;;
-    2) need_root && certbot renew --dry-run ;;
+    1) certificate_health ;;
+    2) need_root && need_cmd certbot && certbot renew --dry-run ;;
+    4) need_cmd certbot && certbot certificates ;;
+    0) return 0 ;;
     3)
       need_cmd openssl || return 1
       prompt 'Masir Fullchain' file || return $?

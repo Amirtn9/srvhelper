@@ -295,7 +295,7 @@ apply_mirror() (
   info "Current archives: $current"
   info "New archive: $new"
   info "Verified suites: ${required//$'\n'/, }"
-  confirm 'Apply this APT mirror?' || return 1
+  confirm 'Apply this APT mirror?' || return $?
   bdir=$(mktemp -d "$(backup_dir)/apt-$(date -u +%Y%m%dT%H%M%SZ).XXXXXXXX") || return 1
   local -a files=()
   mapfile -t files <<< "$paths"
@@ -352,22 +352,112 @@ restore_mirror() (
   [[ "$selected" =~ ^[1-9][0-9]?$ ]] && ((selected <= index)) || return 1
   backup=${backups[selected-1]}
   confirm "Restore APT sources from ${backup##*/}?" || return 1
+  local previous saved target state="$(state_dir)/last-mirror"
+  local -a sources=() targets=() absent=()
   if [[ -d "$backup/etc/apt" ]]; then
-    restore_apt_files "$backup" || { fail "APT restore incomplete: $backup"; return 1; }
+    while IFS= read -r -d '' saved; do
+      sources+=("$saved")
+      targets+=("${saved#"$backup"}")
+    done < <(find "$backup/etc/apt" -type f -print0)
   else
     for name in /etc/apt/sources.list /etc/apt/sources.list.d/{ubuntu,debian}.sources; do
-      if [[ -f "$backup/${name##*/}" ]]; then cp -aT -- "$backup/${name##*/}" "$name" || return 1; fi
+      if [[ -f "$backup/${name##*/}" ]]; then
+        sources+=("$backup/${name##*/}")
+        targets+=("$name")
+      fi
     done
   fi
+  (("${#targets[@]}")) || { fail 'Backup has no source files.'; return 1; }
+  previous=$(mktemp -d "$(backup_dir)/apt-before-restore-$(date -u +%Y%m%dT%H%M%SZ).XXXXXXXX") || return 1
+  for target in "${targets[@]}"; do
+    if [[ -e "$target" || -L "$target" ]]; then cp -a --parents -- "$target" "$previous" || return 1
+    else absent+=("$target"); fi
+  done
+  [[ ! -f "$state" ]] || cp -a -- "$state" "$previous/previous-mirror" || return 1
+  restore_rollback() {
+    local rc=$? failed=0
+    trap - EXIT
+    for target in "${targets[@]}"; do
+      if [[ -e "$previous$target" || -L "$previous$target" ]]; then
+        cp -aT -- "$previous$target" "$target" || failed=1
+      fi
+    done
+    for target in "${absent[@]}"; do rm -f -- "$target" || failed=1; done
+    ((failed == 0)) && fail 'APT restore rejected. Previous sources reinstated.'
+    ((failed == 0)) || fail "APT rollback incomplete: $previous"
+    exit "$rc"
+  }
+  trap restore_rollback EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  for index in "${!targets[@]}"; do
+    cp -aT -- "${sources[index]}" "${targets[index]}" || return 1
+  done
+  DEBIAN_FRONTEND=noninteractive apt-get -o APT::Update::Error-Mode=any update || return 1
   if [[ -f "$backup/previous-mirror" ]]; then
-    cp -a "$backup/previous-mirror" "$(state_dir)/last-mirror" || return 1
+    saved=$(mktemp "$(state_dir)/.restore-mirror.XXXXXXXX") || return 1
+    if ! cp -aT -- "$backup/previous-mirror" "$saved" || ! mv -fT -- "$saved" "$state"; then
+      rm -f -- "$saved"
+      return 1
+    fi
   else
-    rm -f -- "$(state_dir)/last-mirror" || return 1
+    rm -f -- "$state" || return 1
   fi
-  DEBIAN_FRONTEND=noninteractive apt-get -o APT::Update::Error-Mode=any update ||
-    { fail 'APT sources restored, but APT update failed.'; return 1; }
+  trap - EXIT INT TERM
   success 'APT sources restored and package indexes refreshed.'
 )
+
+mirror_lab_sample() (
+  local url=$1 suite=$2 arch release index date_line measured timestamp age
+  arch=$(dpkg --print-architecture) || return 1
+  release=$(mktemp) || return 1
+  trap 'rm -f -- "$release"' EXIT
+  local -a options=(--fail --silent --show-error --location --proto '=http,https' --proto-redir '=http,https' --connect-timeout 4 --max-time 12)
+  curl "${options[@]}" --max-filesize 2097152 -o "$release" "${url%/}/dists/$suite/Release" || return 1
+  date_line=$(sed -n 's/^Date: //p' "$release" | sed -n '1p')
+  timestamp=$(LC_ALL=C date -u -d "$date_line" +%s 2>/dev/null) || timestamp=''
+  if [[ -n "$date_line" && -n "$timestamp" ]]; then
+    age=$((($(date +%s) - timestamp) / 3600))
+    info "Release metadata: $date_line (age: $age hours)"
+  else
+    warn 'Release metadata date unavailable.'
+  fi
+  index=$(awk -v arch="$arch" '
+    $1=="SHA256:" {hash=1; next}
+    /^[^[:space:]]/ {hash=0}
+    hash && $3 ~ ("^main/binary-" arch "/Packages[.](xz|gz|zst)$") && $2 >= 131072 {print $3; exit}
+  ' "$release")
+  if [[ -z "$index" ]]; then
+    warn 'No suitable package index found for a sample.'
+    return 0
+  fi
+  measured=$(curl "${options[@]}" --range 0-131071 --max-filesize 131072 -o /dev/null \
+    -w '%{http_code} %{size_download} %{speed_download}' "${url%/}/dists/$suite/$index" 2>/dev/null) || measured=''
+  local status bytes rate
+  read -r status bytes rate <<< "$measured"
+  if [[ "$status" == 206 && "$bytes" == 131072 ]]; then
+    LC_ALL=C awk -v rate="$rate" 'BEGIN {printf "  128 KiB package-index sample: %.0f KiB/s\n", rate/1024}'
+  else
+    warn 'This mirror did not return a complete bounded sample.'
+  fi
+)
+
+mirror_lab() {
+  local family=$1 code=$2 region selected suite required
+  choose_menu region 'MIRROR LAB' 'Read-only regional benchmark' \
+    1 'Iran' 2 'Europe' 3 'USA' 0 'Back' || return $?
+  case "$region" in
+    1) region=iran ;; 2) region=europe ;; 3) region=usa ;; *) return 0 ;;
+  esac
+  select_ranked_mirror selected "$region" "$code" "$family" || return $?
+  section 'MIRROR LAB RESULTS'
+  suite=$code
+  required=$(apt_archive_plan "$family" --suites) || required=''
+  if grep -Fx -- "$code-updates" <<< "$required" >/dev/null; then suite=$code-updates; fi
+  info "$selected | $suite"
+  mirror_lab_sample "$selected" "$suite" || warn 'Could not retrieve Release metadata.'
+  pause
+}
 
 mirror_menu() {
   local choice region code selected validated family os_id
@@ -385,6 +475,7 @@ mirror_menu() {
     3 'USA: US / Princeton' \
     4 'URL mirror delkhah (ba test)' \
     5 'Bargardandan APT ghabli' \
+    6 'Mirror Lab: metadata age and download sample' \
     0 'Bargasht' || return
   case "$choice" in
     1) region='iran' ;;
@@ -398,6 +489,7 @@ mirror_menu() {
       info "Zaman pasokh: ${validated}s"
       ;;
     5) restore_mirror; pause; return ;;
+    6) mirror_lab "$family" "$code"; return $? ;;
     0) return ;;
     *) warn 'Gozine namotabar'; pause; return ;;
   esac

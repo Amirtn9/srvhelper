@@ -43,8 +43,17 @@ choose_auto_region() {
   esac
 }
 
+smart_cancelled() {
+  case "$1" in
+    20) SRV_BACK_REQUESTED=1 ;;
+    21) SRV_EXIT_REQUESTED=1 ;;
+  esac
+  [[ $SRV_BACK_REQUESTED == 1 || $SRV_EXIT_REQUESTED == 1 ]]
+}
+
 smart_auto_optimize() {
   local region os_id family code dns_first dns_second dns_servers='' mirror='' update_state='ANJAM NASHOD' dns_state='ANJAM NASHOD' bbr_state='ANJAM NASHOD'
+  local step_rc
   local -a dns_ranked=()
   need_root || return 1
   banner; section 'TANZIM HOSHMAND SHABAKE'
@@ -69,19 +78,32 @@ smart_auto_optimize() {
     dns_servers="$dns_first"
     [[ "$dns_second" != "$dns_first" ]] && dns_servers+=" $dns_second"
     info "DNS haye entekhab-shode: $dns_servers"
-    apply_dns "Smart-${region^^}" "$dns_servers" && dns_state='SET SHOD' || dns_state='NAMOVAFAGH / RAD SHOD'
+    if apply_dns "Smart-${region^^}" "$dns_servers"; then
+      dns_state='SET SHOD'
+    else
+      step_rc=$?
+      smart_cancelled "$step_rc" && return 0
+      dns_state='NAMOVAFAGH / RAD SHOD'
+    fi
   else
     warn 'DNS pasokhgo peyda nashod.'
     dns_state='DNS JAVABGO PEYDA NASHOD'
   fi
 
+  smart_cancelled 0 && return 0
   section 'MARHALE 2/4 | MIRROR FINDER'
   os_id=$(. /etc/os-release 2>/dev/null; printf '%s' "${ID:-unknown}")
   code=$(. /etc/os-release 2>/dev/null; printf '%s' "${VERSION_CODENAME:-}")
   case "$os_id" in ubuntu) family=ubuntu ;; debian) family=debian ;; *) family='' ;; esac
   if [[ -n "$family" && -n "$code" ]] && select_ranked_mirror mirror "$region" "$code" "$family"; then
     info "Mirror selected: $mirror"
-    if apply_mirror "$mirror"; then update_state='UPDATE BA MIRROR ENTEKHAB-SHODE MOVAFAGH'; else update_state='MIRROR CHANGE FAILED OR CANCELLED'; fi
+    if apply_mirror "$mirror"; then
+      update_state='UPDATE BA MIRROR ENTEKHAB-SHODE MOVAFAGH'
+    else
+      step_rc=$?
+      smart_cancelled "$step_rc" && return 0
+      update_state='MIRROR CHANGE FAILED OR CANCELLED'
+    fi
   else
     [[ ${SRV_BACK_REQUESTED:-0} == 1 || ${SRV_EXIT_REQUESTED:-0} == 1 ]] && return 0
     info 'Mirror change skipped.'

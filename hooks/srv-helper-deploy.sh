@@ -2,7 +2,7 @@
 # Certbot renewal deploy hook. No dependency on the interactive TUI.
 set -euo pipefail
 umask 077
-conf='/etc/srv-helper/deployments.tsv'
+conf=${SRV_DEPLOY_REGISTRY:-/etc/srv-helper/deployments.tsv}
 ((EUID == 0)) || exit 1
 [[ -r "$conf" && -n ${RENEWED_LINEAGE:-} ]] || exit 0
 certname=${RENEWED_LINEAGE##*/}

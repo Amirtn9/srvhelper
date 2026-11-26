@@ -82,7 +82,7 @@ apply_dns() (
   done
   dns_status
   info "Proposed resolvers: $servers"
-  confirm 'Apply DNS settings?' || return 1
+  confirm 'Apply DNS settings?' || return $?
   install -d -m 755 /etc/systemd/resolved.conf.d || return 1
   install -d -m 700 "$(backup_dir)/dns" "$(state_dir)" || return 1
   exec 9>"$(state_dir)/dns.lock" || return 1

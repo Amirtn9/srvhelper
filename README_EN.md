@@ -12,6 +12,8 @@
 
 Run `srv-helper --doctor` for a read-only report on disk space, DNS resolution, IPv4 and IPv6 routing, cached APT metadata, SSH activation, and certificate expiry. The report omits hostnames, IP addresses, and certificate domain names.
 
+Use `srv-helper --live` for the live resource dashboard. Server Doctor can compare snapshots within a session. Mirror Lab reports Release metadata age and a bounded index sample, and the certificate dashboard reports expiry and deployment synchronization.
+
 ## Main sections
 
 ### 1. SSL & Certificates

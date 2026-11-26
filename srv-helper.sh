@@ -50,7 +50,7 @@ main_menu() {
       2) network_tools_menu ;;
       3) server_services_menu ;;
       4) system_menu ;;
-      5) server_doctor; pause ;;
+      5) doctor_menu ;;
       0|exit|quit) return 0 ;;
       *) warn 'Gozine namotabar'; pause ;;
     esac
@@ -61,9 +61,10 @@ main_menu() {
 
 case "${1:-}" in
   --help|-h)
-    printf 'SRV Helper %s\nUsage: sudo srv-helper [--help|--version|--doctor]\n' "$SRV_VERSION"
+    printf 'SRV Helper %s\nUsage: sudo srv-helper [--help|--version|--doctor|--live]\n' "$SRV_VERSION"
     ;;
   --doctor) server_doctor ;;
+  --live) live_dashboard ;;
   --version|-v) printf 'SRV Helper %s\n' "$SRV_VERSION" ;;
   '') main_menu ;;
   *) printf 'Argument namotabar: %s\n' "$1" >&2; exit 2 ;;

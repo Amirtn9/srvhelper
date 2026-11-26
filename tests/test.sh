@@ -197,6 +197,73 @@ SOURCES
   grep -Fx 'deb [signed-by=/usr/share/keyrings/test.gpg] https://mirror.example/ubuntu noble-backports main # example' "$tmp/custom.list" >/dev/null
 )
 
+# Smart Setup must propagate a cancellation returned by a subshell.
+(
+  need_root() { return 0; }
+  choose_auto_region() { printf -v "$1" '%s' iran; }
+  confirm() { return 0; }
+  ensure_dig() { return 0; }
+  rank_dns_servers() { printf '3|10|Mock DNS|192.0.2.53\n'; }
+  apply_dns() ( return 21; )
+  select_ranked_mirror() { exit 99; }
+  smart_auto_optimize >/dev/null
+  [[ "$SRV_EXIT_REQUESTED" == 1 ]]
+)
+
+# An APT restore must recover the current sources if refreshing indexes fails.
+(
+  tmp=$(mktemp -d)
+  trap 'rm -rf -- "$tmp"' EXIT
+  mkdir -p "$tmp/etc/apt" "$tmp/state" "$tmp/backups/apt-old$tmp/etc/apt"
+  source <(sed "s@/etc/apt@$tmp/etc/apt@g" "$home/lib/mirrors.sh")
+  need_root() { return 0; }
+  state_dir() { printf '%s/state' "$tmp"; }
+  backup_dir() { printf '%s/backups' "$tmp"; }
+  choose_menu() { printf -v "$1" '%s' 1; }
+  confirm() { return 0; }
+  apt-get() { return 1; }
+  printf 'current\n' > "$tmp/etc/apt/sources.list"
+  printf 'old\n' > "$tmp/backups/apt-old$tmp/etc/apt/sources.list"
+  printf 'current-mirror\n' > "$tmp/state/last-mirror"
+  if restore_mirror >/dev/null 2>&1; then exit 1; fi
+  [[ "$(cat "$tmp/etc/apt/sources.list")" == current ]]
+  [[ "$(cat "$tmp/state/last-mirror")" == current-mirror ]]
+)
+
+# Failed runtime writes must leave persistent sysctl files alone.
+(
+  tmp=$(mktemp -d)
+  trap 'rm -rf -- "$tmp"' EXIT
+  mkdir -p "$tmp/sysctl.d"
+  source <(sed "s@/etc/sysctl.d@$tmp/sysctl.d@g" "$home/lib/system.sh")
+  need_root() { return 0; }
+  state_dir() { printf '%s/state' "$tmp"; }
+  confirm() { return 0; }
+  sysctl() { if [[ "$1" == -n ]]; then printf '0\n'; else return 1; fi; }
+  printf 'net.ipv4.icmp_echo_ignore_all = 0\n' > "$tmp/sysctl.d/90-srv-helper.conf"
+  if set_sysctl_option net.ipv4.icmp_echo_ignore_all 1 >/dev/null 2>&1; then exit 1; fi
+  [[ "$(cat "$tmp/sysctl.d/90-srv-helper.conf")" == 'net.ipv4.icmp_echo_ignore_all = 0' ]]
+)
+
+# Mirror Lab reports download rate only for a complete bounded response.
+(
+  dpkg() { printf 'amd64\n'; }
+  curl() {
+    while (($#)); do
+      case "$1" in
+        --range) printf '206 131072 65536'; return ;;
+        -o)
+          printf 'Date: Thu, 26 Nov 2026 01:00:00 UTC\nSHA256:\n hash 200000 main/binary-amd64/Packages.xz\n' > "$2"
+          return ;;
+      esac
+      shift
+    done
+    return 1
+  }
+  result=$(mirror_lab_sample https://example.com/ubuntu noble)
+  [[ "$result" == *'Release metadata:'*'128 KiB package-index sample: 64 KiB/s'* ]]
+)
+
 # The real menu must accept the reported hostname and reach the validation-method screen.
 ssl_menu_output=$(printf '1\n1\npl24.pingyar.com\nback\n0\n0\n' | env NO_COLOR=1 NO_CLEAR=1 bash "$home/srv-helper.sh" 2>&1)
 [[ "$ssl_menu_output" == *'RAVESH TAEED DOMAIN'* ]]

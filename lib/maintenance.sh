@@ -6,42 +6,89 @@ swap_status() {
   [[ -e /swapfile-srv-helper ]] && info 'File Swap modiriat-shode mojood ast.'
 }
 
-swap_create() {
-  local size file='/swapfile-srv-helper' marker='/var/lib/srv-helper/swap-managed'
+swap_create() (
+  local size file='/swapfile-srv-helper' marker="$(state_dir)/swap-managed" backup staged marker_stage
+  local active=0 committed=0 marker_written=0 fstab_written=0
   need_root || return 1
-  [[ ! -e "$file" ]] || { warn 'SRV Helper swap file az ghabl vojood darad'; return 1; }
-  if command -v swapon >/dev/null 2>&1 && swapon --show=NAME --noheadings 2>/dev/null | grep -Fxq "$file"; then
-    warn 'Swap file ghablan faal shode ast'; return 1
+  prompt 'Swap size in MiB (128-65536)' size || return $?
+  if ! [[ "$size" =~ ^[0-9]{3,5}$ ]] || ((10#$size<128 || 10#$size>65536)); then
+    fail 'Enter a size between 128 and 65536 MiB.'
+    return 1
   fi
-  prompt 'Swap size be MB (128-65536)' size || return 1
-  if ! [[ "$size" =~ ^[0-9]+$ ]] || ((10#$size<128 || 10#$size>65536)); then fail 'Size bayad 128 ta 65536 MB bashad'; return 1; fi
-  confirm "Swap ${size}MB ijad shavad?" || return 1
-  if command -v fallocate >/dev/null 2>&1; then fallocate -l "${size}M" "$file" || return 1
-  else dd if=/dev/zero of="$file" bs=1M count="$size" status=progress || { rm -f "$file"; return 1; }; fi
-  chmod 600 "$file"
-  if ! mkswap "$file" >/dev/null || ! swapon "$file"; then rm -f "$file"; fail 'Swap create/activate fail shod'; return 1; fi
-  install -d -m 700 /var/lib/srv-helper "$(backup_dir)"
-  cp -a /etc/fstab "$(backup_dir)/fstab.$(date -u +%Y%m%dT%H%M%SZ).bak" 2>/dev/null || :
-  grep -Fq "$file none swap" /etc/fstab || printf '%s none swap sw 0 0 # srv-helper-managed\n' "$file" >> /etc/fstab
-  printf '%s\n' "$file" > "$marker"; chmod 600 "$marker"
-  success "Swap ${size}MB faal va paydar shod"
-}
+  size=$((10#$size))
+  confirm "Create ${size} MiB of persistent swap?" || return $?
+  install -d -m 700 "$(state_dir)" "$(backup_dir)" || return 1
+  exec 9>"$(state_dir)/swap.lock" || return 1
+  flock -n 9 || return 1
+  [[ ! -e "$file" && ! -L "$file" && ! -e "$marker" ]] || { fail 'Managed swap already exists.'; return 1; }
+  [[ -f /etc/fstab && ! -L /etc/fstab ]] || return 1
+  backup=$(mktemp "$(backup_dir)/fstab.XXXXXXXX") || return 1
+  cp -aT /etc/fstab "$backup" || return 1
+  staged=$(mktemp /etc/.fstab.srv-helper.XXXXXXXX) || return 1
+  marker_stage=$(mktemp "$(state_dir)/.swap.XXXXXXXX") || { rm -f "$staged"; return 1; }
+  swap_cleanup() {
+    local rc=$?
+    trap - EXIT
+    rm -f -- "$staged" "$marker_stage"
+    if ((!committed)); then
+      if ((fstab_written)); then cp -aT -- "$backup" /etc/fstab || fail "Restore fstab from $backup"; fi
+      if ((marker_written)); then rm -f -- "$marker"; fi
+      if ((!active)) || swapoff "$file"; then
+        rm -f -- "$file"
+      else
+        fail "Swap remains active: $file"
+      fi
+    fi
+    exit "$rc"
+  }
+  trap swap_cleanup EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  cp -aT /etc/fstab "$staged" || return 1
+  if ! awk -v file="$file" '$1==file {found=1} END {exit !found}' "$staged"; then
+    printf '%s none swap sw 0 0 # srv-helper-managed\n' "$file" >> "$staged" || return 1
+  fi
+  printf '%s\n' "$file" > "$marker_stage" || return 1
+  install -m 600 /dev/null "$file" || return 1
+  if command -v fallocate >/dev/null; then fallocate -l "${size}M" "$file" || return 1
+  else dd if=/dev/zero of="$file" bs=1M count="$size" status=progress || return 1; fi
+  mkswap "$file" >/dev/null && swapon "$file" || { fail 'Could not activate swap.'; return 1; }
+  active=1
+  marker_written=1
+  mv -fT -- "$marker_stage" "$marker" || return 1
+  fstab_written=1
+  mv -fT -- "$staged" /etc/fstab || return 1
+  committed=1
+  success 'Swap is active and configured for reboot.'
+)
 
-swap_remove() {
-  local marker='/var/lib/srv-helper/swap-managed' file
+swap_remove() (
+  local marker="$(state_dir)/swap-managed" file backup staged
   need_root || return 1
-  [[ -r "$marker" ]] || { fail 'Swap file managed tavasote SRV Helper nist; remove nemishavad'; return 1; }
-  IFS= read -r file < "$marker"
-  [[ "$file" == '/swapfile-srv-helper' && -f "$file" ]] || { fail 'Swap marker namotabar ast'; return 1; }
-  confirm 'SRV Helper swap disable va delete shavad?' || return 1
-  swapoff "$file" || { fail 'swapoff fail shod'; return 1; }
-  install -d -m 700 "$(backup_dir)"
-  cp -a /etc/fstab "$(backup_dir)/fstab.$(date -u +%Y%m%dT%H%M%SZ).bak" 2>/dev/null || :
-  local tmp; tmp=$(mktemp /etc/.fstab.srv-helper.XXXXXX) || return 1
-  awk -v p="$file" '$1 != p {print}' /etc/fstab > "$tmp"
-  cat "$tmp" > /etc/fstab; rm -f "$tmp" "$file" "$marker"
-  success 'File Swap hazf shod'
-}
+  [[ -r "$marker" ]] || { fail 'No SRV Helper swap marker.'; return 1; }
+  confirm 'Disable and remove managed swap?' || return $?
+  install -d -m 700 "$(backup_dir)" || return 1
+  exec 9>"$(state_dir)/swap.lock" || return 1
+  flock -n 9 || return 1
+  IFS= read -r file < "$marker" || return 1
+  [[ "$file" == /swapfile-srv-helper && -f "$file" && ! -L "$file" && -f /etc/fstab && ! -L /etc/fstab ]] || return 1
+  backup=$(mktemp "$(backup_dir)/fstab.XXXXXXXX") || return 1
+  cp -aT /etc/fstab "$backup" || return 1
+  staged=$(mktemp /etc/.fstab.srv-helper.XXXXXXXX) || return 1
+  trap 'rm -f -- "$staged"' EXIT
+  cp -aT /etc/fstab "$staged" && awk -v p="$file" '$1 != p {print}' /etc/fstab > "$staged" || return 1
+  local was_active=0
+  if swapon --show=NAME --noheadings | grep -Fx -- "$file" >/dev/null; then
+    swapoff "$file" || return 1
+    was_active=1
+  fi
+  if ! mv -fT -- "$staged" /etc/fstab; then
+    if ((was_active)); then swapon "$file" || fail 'Could not reactivate swap.'; fi
+    return 1
+  fi
+  rm -f -- "$file" && rm -f -- "$marker" || { fail 'Swap disabled, but cleanup failed.'; return 1; }
+  success 'Managed swap removed.'
+)
 
 zram_status() {
   section 'VASIAT ZRAM'

@@ -40,7 +40,7 @@ quick_status() {
   local os host cores cpu ram disk uptime_line
   os=$(os_label); host=$(hostname 2>/dev/null || printf unknown)
   cores=$(getconf _NPROCESSORS_ONLN 2>/dev/null || printf '?')
-  cpu=$(cpu_usage) || cpu=''
+  if (($#)); then cpu=$1; else cpu=$(cpu_usage) || cpu=''; fi
   ram=$(awk '
     /^MemTotal:/ {total = $2}
     /^MemAvailable:/ {available = $2; found = 1}
@@ -83,36 +83,74 @@ network_status() {
   dns_status
 }
 # Keep persistent settings in one isolated file, without touching existing distro files.
-set_sysctl_option() {
-  local key=$1 value=$2 file='/etc/sysctl.d/90-srv-helper.conf' new tmp
+set_sysctl_option() (
+  local key=$1 value=$2 file='/etc/sysctl.d/90-srv-helper.conf' tmp previous changed=0
   need_root || return 1
   [[ "$key" == net.ipv6.conf.all.disable_ipv6 || "$key" == net.ipv4.icmp_echo_ignore_all ]] || return 1
   [[ "$value" == 0 || "$value" == 1 ]] || return 1
-  warn "Tanzim system: $key = $value"
-  confirm 'Taghir anjam shavad? (risk baraye SSH/network)' || return 1
+  confirm "Apply $key=$value?" || return $?
+  install -d -m 700 "$(state_dir)" || return 1
+  exec 9>"$(state_dir)/sysctl.lock" || return 1
+  flock -n 9 || return 1
+  previous=$(sysctl -n "$key") || return 1
   tmp=$(mktemp /etc/sysctl.d/.srv-helper.XXXXXX) || return 1
+  sysctl_cleanup() {
+    local rc=$?
+    trap - EXIT
+    rm -f -- "$tmp"
+    if ((changed)); then sysctl -w "$key=$previous" >/dev/null || fail "Runtime rollback failed: $key"; fi
+    exit "$rc"
+  }
+  trap sysctl_cleanup EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   if [[ -f "$file" ]]; then
-    awk -v key="$key" '
-      $0 !~ "^[[:space:]]*" key "[[:space:]]*=" {print}
-    ' "$file" > "$tmp"
+    awk -F= -v key="$key" '{ field=$1; gsub(/[[:space:]]/, "", field); if (field != key) print }' "$file" > "$tmp" || return 1
   fi
-  printf '%s = %s\n' "$key" "$value" >> "$tmp"
-  chmod 644 "$tmp"
-  mv -f -- "$tmp" "$file"
-  if sysctl -w "$key=$value"; then success 'Tanzim system zakhire shod';
-  else fail 'Ejra fail shod; file ra barrasi konid'; return 1; fi
-}
-reset_sysctl() {
+  printf '%s = %s\n' "$key" "$value" >> "$tmp" && chmod 644 "$tmp" || return 1
+  if ! sysctl -w "$key=$value"; then
+    fail 'Live change failed. Persistent configuration was preserved.'
+    return 1
+  fi
+  changed=1
+  if ! mv -fT -- "$tmp" "$file"; then
+    fail 'Could not save the setting.'
+    return 1
+  fi
+  changed=0
+  success 'Setting applied and saved.'
+)
+
+reset_sysctl() (
   need_root || return 1
-  local file='/etc/sysctl.d/90-srv-helper.conf'
-  [[ -f "$file" ]] || { warn 'Hich setting SRV Helper mojood nist'; return 1; }
-  confirm 'File sysctl pak shavad va meghdar default faal shavad?' || return 1
-  rm -f -- "$file"
-  # Reset to common defaults. Another distro sysctl file may override them later.
-  sysctl -w net.ipv6.conf.all.disable_ipv6=0 || :
-  sysctl -w net.ipv4.icmp_echo_ignore_all=0 || :
-  success 'Setting ha reset shodand; baraye restore daghigh, distro config ra barresi konid.'
-}
+  local file='/etc/sysctl.d/90-srv-helper.conf' key previous
+  local -a keys=() values=()
+  [[ -f "$file" ]] || { warn 'No SRV Helper settings to reset.'; return 1; }
+  confirm 'Remove managed settings and set their live values to 0?' || return $?
+  install -d -m 700 "$(state_dir)" || return 1
+  exec 9>"$(state_dir)/sysctl.lock" || return 1
+  flock -n 9 || return 1
+  for key in net.ipv6.conf.all.disable_ipv6 net.ipv4.icmp_echo_ignore_all; do
+    if awk -F= -v key="$key" '{ field=$1; gsub(/[[:space:]]/, "", field); if (field == key) found=1 } END {exit !found}' "$file"; then
+      previous=$(sysctl -n "$key") || return 1
+      keys+=("$key"); values+=("$previous")
+    fi
+  done
+  local index applied=0
+  for index in "${!keys[@]}"; do
+    if sysctl -w "${keys[index]}=0"; then applied=$((applied+1)); else break; fi
+  done
+  if ((applied == ${#keys[@]})) && rm -f -- "$file"; then
+    success 'Managed settings reset. Other distro settings can still apply after reboot.'
+    return 0
+  fi
+  for ((index=0; index<applied; index++)); do
+    sysctl -w "${keys[index]}=${values[index]}" >/dev/null || fail "Runtime rollback failed: ${keys[index]}"
+  done
+  fail 'Reset failed. Persistent configuration was preserved.'
+  return 1
+)
+
 network_menu() {
   local choice
   while :; do
@@ -146,6 +184,7 @@ system_menu() {
       4 'Test MTU (faghat khanadani)' \
       5 'Barrasi amniat SSH' \
       6 'Ezafe kardan port SSH ba amniat' \
+      7 'Live server dashboard' \
       0 'Bargasht'; rc=$?
     if ((rc==20)); then SRV_BACK_REQUESTED=0; return; fi
     ((rc==0)) || return "$rc"
@@ -156,6 +195,7 @@ system_menu() {
       4) mtu_finder; pause ;;
       5) ssh_audit; pause ;;
       6) ssh_add_port_safely; pause ;;
+      7) live_dashboard ;;
       0) return ;;
       *) warn 'Gozine namotabar'; pause ;;
     esac
@@ -231,3 +271,72 @@ tcp_optimizer_menu() {
 }
 
 bbr_menu() { tcp_optimizer_menu; }
+
+network_counters() {
+  local iface=$1
+  awk -F: -v iface="$iface" '
+    NR > 2 {name=$1; gsub(/[[:space:]]/, "", name)}
+    name==iface {
+      sub(/^[[:space:]]+/, "", $2)
+      split($2, fields, /[[:space:]]+/)
+      print fields[1], fields[9]
+      exit
+    }
+  ' /proc/net/dev
+}
+
+live_dashboard() {
+  local iface key now last rx tx last_rx last_tx delta rc paused=0 index=0
+  local in_rate='--' out_rate='--' cpu recent='' levels='._-~=+*#%@' level
+  local -a interfaces=()
+  mapfile -t interfaces < <(awk -F: 'NR>2 {gsub(/[[:space:]]/, "", $1); if ($1!="lo") print $1}' /proc/net/dev)
+  (("${#interfaces[@]}")) || interfaces=(lo)
+  while :; do
+    iface=${interfaces[index]}
+    if ((!paused)); then
+      read -r now _ < /proc/uptime
+      if read -r rx tx < <(network_counters "$iface") && [[ -n ${last:-} ]]; then
+        read -r in_rate out_rate < <(LC_ALL=C awk -v dt="$now" -v start="$last" -v rx="$rx" -v tx="$tx" \
+          -v old_rx="$last_rx" -v old_tx="$last_tx" 'BEGIN {
+            dt -= start
+            if (dt <= 0 || rx < old_rx || tx < old_tx) print "-- --";
+            else printf "%.1f %.1f\n", (rx-old_rx)/dt/1024, (tx-old_tx)/dt/1024
+          }')
+      fi
+      last=$now; last_rx=$rx; last_tx=$tx
+      banner; section 'LIVE SERVER DASHBOARD'
+      cpu=$(cpu_usage) || cpu=''
+      quick_status "$cpu"
+      if [[ "$cpu" =~ ^([0-9]{1,2}|100)$ ]]; then
+        level=$((10#$cpu * 9 / 100))
+        recent+=${levels:level:1}
+        if ((${#recent} > 32)); then recent=${recent: -32}; fi
+      fi
+      printf '  CPU history  %s%s%s\n' "$C1" "${recent:---}" "$RESET"
+      delta=$(awk '/^SwapTotal:/ {total=$2} /^SwapFree:/ {free=$2} END {if(total>0) printf "%.0f",100*(total-free)/total}' /proc/meminfo)
+      resource_meter Swap "$delta" 'Swap in use'
+      printf '\n  %s%-12s%s  RX %s KiB/s   TX %s KiB/s\n' "$C1" "$iface" "$RESET" "$in_rate" "$out_rate"
+    fi
+    [[ -t 0 && -t 1 ]] || return 0
+    if ((!paused)); then printf '  [P] Pause  [N] Next interface  [Q] Back\n'; fi
+    if IFS= read -rsn1 -t 1 key; then
+      :
+    else
+      rc=$?
+      ((rc > 128)) || return 0
+      continue
+    fi
+    case "$key" in
+      q|Q|''|$'\r') return 0 ;;
+      p|P)
+        paused=$((1-paused))
+        last=''
+        if ((paused)); then printf '  Paused. [P] Resume  [N] Next interface  [Q] Back\n'; fi
+        ;;
+      n|N)
+        index=$(((index+1) % ${#interfaces[@]}))
+        last='' in_rate='--' out_rate='--' paused=0
+        ;;
+    esac
+  done
+}
