@@ -94,6 +94,14 @@ cd ~/srvhelper &&
 
 ## اجرای آنلاین از ترمینال
 
+اگر با کاربر `root` وارد سرور شده‌اید، در Bash این دستور نصب‌کننده را از GitHub اجرا می‌کند و پس از تأیید نصب، منو را باز می‌کند:
+
+```bash
+bash <(curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/Amirtn9/srvhelper/main/install.sh) --launch
+```
+
+اگر کاربر عادی هستید، ابتدا با `sudo -i` وارد پوستهٔ روت شوید. برای دیدن فایل قبل از اجرا، از روش دانلود جداگانهٔ زیر استفاده کنید.
+
 این مسیر به دسترسی HTTPS به GitHub نیاز دارد. برای مشاهدهٔ اختیاری فایل نصب‌کننده، پس از دانلود آن را با `less "$installer/install.sh"` باز کنید و با `q` برگردید.
 
 ```bash

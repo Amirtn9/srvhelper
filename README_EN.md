@@ -57,6 +57,14 @@ git clone --depth 1 https://github.com/Amirtn9/srvhelper.git &&
 
 For an existing checkout, run `git pull --ff-only && bash install.sh --check && sudo bash install.sh --launch` from the repository root.
 
+## Install and launch directly from Bash
+
+Run this from an interactive root shell. The installer asks for confirmation before installing.
+
+```bash
+bash <(curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/Amirtn9/srvhelper/main/install.sh) --launch
+```
+
 ## Offline transfer
 
 Download the [GitHub branch ZIP](https://github.com/Amirtn9/srvhelper/archive/refs/heads/main.zip) on a connected machine, transfer it to the server, and extract it. From the extracted directory, run `bash install.sh --check` and then `sudo bash install.sh --launch`. APT connectivity is required if any reported dependencies are missing. The installer places the application under `/opt/srv-helper` and creates `/usr/local/bin/srv-helper`.
