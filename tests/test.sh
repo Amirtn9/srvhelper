@@ -281,6 +281,50 @@ exit_rc=$(printf 'exit\n' | bash -c 'source "$1/lib/ui.sh"; prompt test value >/
 [[ "$(resource_meter CPU '' '')" == *'[----------------]   --'* ]]
 bash "$home/install.sh" --help | grep -- '--check' >/dev/null
 
+# DNS must replace a stale resolver path and roll both files back on a routing conflict.
+(
+  fixture=$(mktemp -d)
+  trap 'rm -rf -- "$fixture"' EXIT
+  state_dir() { printf '%s/state' "$fixture"; }
+  backup_dir() { printf '%s/backups' "$fixture"; }
+  dns_resolv_file() { printf '%s/resolv.conf' "$fixture"; }
+  dns_resolved_file() { printf '%s/resolved.d/helper.conf' "$fixture"; }
+  dns_stub_file() { printf '%s/stub.conf' "$fixture"; }
+  need_root() { return 0; }
+  confirm() { return 0; }
+  timeout() { shift; "$@"; }
+  dig() { printf '192.0.2.1\n'; }
+  getent() { return 0; }
+  systemctl() { return 0; }
+  resolvectl() {
+    case "$1" in
+      dns) printf 'Global: 8.8.8.8 8.8.4.4\nLink 2 (eth0): 192.0.2.53\n' ;;
+      domain)
+        printf 'Global: ~.\n'
+        if [[ ${conflict:-0} == 1 ]]; then printf 'Link 2 (eth0): vendor.local ~.\n'; fi
+        ;;
+    esac
+  }
+  printf 'nameserver 192.0.2.53\n' > "$fixture/old"
+  cp "$fixture/old" "$fixture/resolv.conf"
+  printf 'nameserver 127.0.0.53\n' > "$fixture/stub.conf"
+  conflict=1
+  if apply_dns Google '8.8.8.8 8.8.4.4' >/dev/null 2>&1; then exit 1; fi
+  cmp "$fixture/old" "$fixture/resolv.conf"
+  [[ ! -e "$fixture/resolved.d/helper.conf" ]]
+  conflict=0
+  apply_dns Google '8.8.8.8 8.8.4.4' >/dev/null
+  [[ "$(readlink "$fixture/resolv.conf")" == "$fixture/stub.conf" ]]
+  grep -Fx 'DNS=8.8.8.8 8.8.4.4' "$fixture/resolved.d/helper.conf" >/dev/null
+
+  rm "$fixture/resolv.conf"
+  cp "$fixture/old" "$fixture/resolv.conf"
+  dns_resolved_active() { return 1; }
+  apply_dns Google '8.8.8.8 8.8.4.4' >/dev/null
+  grep -Fx 'nameserver 8.8.8.8' "$fixture/resolv.conf" >/dev/null
+  if grep -q '192.0.2.53' "$fixture/resolv.conf"; then exit 1; fi
+)
+
 # The migration wizard must be reachable and reject unsafe restore scope and SSH operands.
 migration_screen=$(printf '6\n0\n0\n' | NO_COLOR=1 bash "$home/srv-helper.sh")
 [[ "$migration_screen" == *'BACKUP VA ENTEGHAL SERVER'* ]]
@@ -290,9 +334,33 @@ migration_screen=$(printf '6\n0\n0\n' | NO_COLOR=1 bash "$home/srv-helper.sh")
   fail() { :; }
   ssh() { exit 99; }
   if migration_remote postgres '16;invalid'; then exit 1; fi
-  if migration_preflight_restore /dev/stdin <<< 'DATA=/etc'; then exit 1; fi
+  fixture=$(mktemp)
+  trap 'rm -f -- "$fixture"' EXIT
+  printf 'DATA=/etc\n' > "$fixture"
+  if migration_preflight_restore "$fixture"; then exit 1; fi
 )
 bash "$home/lib/migration-remote.sh" unsupported >/dev/null 2>&1 && exit 1
+
+# Backup-only operation can be followed by an archive restore without the SSH source.
+(
+  source "$home/lib/migration.sh"
+  fixture=$(mktemp -d)
+  trap 'rm -rf -- "$fixture"' EXIT
+  mkdir "$fixture/input" "$fixture/output" "$fixture/bad"
+  migration_path_supported /opt/example
+  migration_path_supported /home/example
+  if migration_path_supported /opt/srv-helper; then exit 1; fi
+  if migration_path_supported /home/example/.ssh; then exit 1; fi
+  cd "$fixture/input"
+  for name in inventory packages.tsv services.txt mounts.txt root.tar.gz; do printf '%s\n' "$name" > "$name"; done
+  sha256sum inventory packages.tsv services.txt mounts.txt root.tar.gz > SHA256SUMS
+  tar -cf "$fixture/good.tar" inventory packages.tsv services.txt mounts.txt root.tar.gz SHA256SUMS
+  migration_unpack_bundle "$fixture/good.tar" "$fixture/output"
+  cmp inventory "$fixture/output/inventory"
+  printf 'tampered\n' > inventory
+  tar -cf "$fixture/bad.tar" inventory packages.tsv services.txt mounts.txt root.tar.gz SHA256SUMS
+  if migration_unpack_bundle "$fixture/bad.tar" "$fixture/bad" >/dev/null 2>&1; then exit 1; fi
+)
 
 # Terminal UI is ASCII/Finglish. Check branding in loaded modules only.
 if LC_ALL=C grep -nP '[^\x00-\x7F]' "$home"/srv-helper.sh "$home"/install.sh "$home"/hooks/*.sh "$home"/lib/*.sh; then

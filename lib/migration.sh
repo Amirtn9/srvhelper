@@ -51,7 +51,7 @@ migration_finish() {
   if [[ -n ${migration_bundle:-} && -f "$migration_bundle" ]]; then
     info "Backup ramznegari-shode: $migration_bundle"
     if [[ ${migration_status[5]} == ok ]]; then
-      sed -n 's/^DATA=/  File-ha restore shod: /p; s/^PG_DATABASE=/  Database PostgreSQL restore shod: /p; s/^MYSQL_DATABASE=/  Schema MySQL\/MariaDB restore shod: /p' "$migration_work/inventory"
+      sed -n 's/^DATA=/  File-ha restore shod: /p; s/^SKIPPED_DATA=/  File-ha skip shod: /p; s/^PG_DATABASE=/  Database PostgreSQL restore shod: /p; s/^MYSQL_DATABASE=/  Schema MySQL\/MariaDB restore shod: /p' "$migration_work/restore-inventory"
     fi
   fi
   if [[ -n ${migration_work:-} ]]; then
@@ -70,7 +70,7 @@ migration_wizard() (
   local mode=$1 migration_host migration_user migration_port pin key actual
   local migration_step=0 migration_work='' migration_bundle='' migration_priv=''
   local path manifest platform local_version local_arch bytes free value space_factor=2
-  local pg='' mysql='' index db_version volumes
+  local pg='' mysql='' index db_version
   local -a migration_labels=('Ettezaal SSH va tasdiq kelid' 'Barrasi Ubuntu, disk va service-ha' 'Backup database-ha' 'Enteghal file-ha' 'Ramznegari va barresi backup' 'Bazsazi va barresi maghsad')
   local -a migration_status=(pending pending pending pending pending pending)
   need_root || return 1
@@ -133,21 +133,15 @@ migration_wizard() (
   migration_remote packages > "$migration_work/packages.tsv" || return 1
   migration_remote services > "$migration_work/services.txt" || return 1
   migration_remote mounts > "$migration_work/mounts.txt" || return 1
-  volumes=$(migration_value "$manifest" VOLUME)
-  if [[ -n "$volumes" ]]; then
-    warn 'Volume joda dar mabda vojood darad. Backup root filesystem in volume-ha ra cover nemikonad.'
-    sed -n 's/^VOLUME=/  /p' "$manifest"
-    if [[ "$mode" == restore ]]; then
-      local mount
-      while IFS= read -r mount; do
-        case "$mount" in
-          /srv|/srv/*|/var|/var/www|/var/www/*)
-            fail "Volume app joda ast; restore khodkar motavaqef shod: $mount"
-            return 1 ;;
-        esac
-      done < <(sed -n 's/^VOLUME=//p' "$manifest")
-    fi
+  if grep -q '^LOCAL_VOLUME=' "$manifest"; then
+    info 'Volume-haye local ke dar backup file-mehvar miayand:'
+    sed -n 's/^LOCAL_VOLUME=/  /p' "$manifest"
   fi
+  if grep -q '^EXTERNAL_VOLUME=' "$manifest"; then
+    warn 'Volume-haye external dar archive nistand:'
+    sed -n 's/^EXTERNAL_VOLUME=/  /p' "$manifest"
+  fi
+  if [[ "$mode" == restore ]]; then migration_check_source_volumes "$manifest" || return 1; fi
   pg=$(migration_value "$manifest" POSTGRES)
   mysql=$(migration_value "$manifest" MYSQL)
   if grep -qx 'ACTIVE=postgresql.service' "$manifest" && [[ -z "$pg" ]]; then fail 'PostgreSQL faal ast vali cluster peyda nashod.'; return 1; fi
@@ -158,16 +152,17 @@ migration_wizard() (
   fi
   section 'PISHNAMAYESH'
   info "Ubuntu $local_version | $local_arch"
-  info "Hajm takhmini root filesystem: $((bytes/1048576)) MiB"
+  info "Hajm takhmini file-ha: $((bytes/1048576)) MiB"
   info "Package-ha: $(awk '$1=="ii" {count++} END {print count+0}' "$migration_work/packages.tsv")"
   info "Service-haye enabled: $(awk '$2=="enabled" {count++} END {print count+0}' "$migration_work/services.txt")"
   sed -n 's/^ACTIVE=/  Service faal: /p; s/^DATA=/  Masir app: /p; s/^PG_DATABASE=/  PostgreSQL: /p; s/^MYSQL_DATABASE=/  MySQL\/MariaDB: /p' "$manifest"
   info 'Backup: root filesystem, package list, service list, logical database dumps.'
-  warn 'File-haye live snapshot block-level nistand. Disk-haye joda va bootloader joda modiriat mishavand.'
+  warn 'File-haye live snapshot block-level nistand. Bootloader va partition table joda modiriat mishavand.'
   if [[ "$mode" == restore ]]; then
-    info 'Restore khodkar: /srv, /var/www va database-haye poshtibani-shode dar maghsad khali.'
+    info 'Restore khodkar: /srv, /var/www, app-haye /opt, /home va database-haye poshtibani-shode dar maghsad khali.'
     warn 'Package inventory, user-ha, Docker, SSH, network va config-haye digar baraye restore dasti dar backup mimanand.'
-    migration_preflight_restore "$manifest" --plan || return 1
+    migration_prepare_restore_plan "$manifest" "$migration_work/restore-inventory" || return 1
+    migration_preflight_restore "$migration_work/restore-inventory" --plan || return 1
   fi
   if [[ -n "$mysql" ]]; then warn 'MySQL/MariaDB dump neveshtan ra movaghatian lock mikonad.'; fi
   if confirm 'Backup va amaliat entekhab-shode shoroo shavad?'; then
@@ -218,8 +213,8 @@ migration_wizard() (
   mv -T -- "$migration_work/backup.tar.gpg" "$migration_bundle" || return 1
   migration_status[4]=ok
   migration_phase 5
-  if [[ "$mode" == restore ]] && grep -Eq '^(DATA|POSTGRES|MYSQL_DATABASE)=' "$manifest"; then
-    migration_restore "$manifest" "$migration_work" || return 1
+  if [[ "$mode" == restore ]] && grep -Eq '^(DATA|POSTGRES|MYSQL_DATABASE|MYSQL_ACCOUNT)=' "$migration_work/restore-inventory"; then
+    migration_restore "$migration_work/restore-inventory" "$migration_work" || return $?
     migration_status[5]=ok
   else
     migration_status[5]=skipped
@@ -237,10 +232,59 @@ migration_pg_port() {
   awk -v version="$source_version" '$1==version && $4=="online" {print $3; found=1} END {exit !found}' <<< "$target"
 }
 
+migration_prepare_restore_plan() {
+  local inventory=$1 plan=$2 item
+  local -a skip=()
+  while IFS= read -r item; do
+    migration_path_supported "$item" || return 1
+    case "$item" in
+      /opt/*|/home/*)
+        if [[ -L "$item" || ( -e "$item" && ! -d "$item" ) ||
+              ( -d "$item" && -n $(find "$item" -mindepth 1 -maxdepth 1 -print -quit) ) ]]; then
+          warn "Masir maghsad por ast va restore nemishavad: $item"
+          skip+=("$item")
+        fi
+        ;;
+    esac
+  done < <(sed -n 's/^DATA=//p' "$inventory")
+  if (("${#skip[@]}" == 0)); then cp -- "$inventory" "$plan"; return $?; fi
+  printf '%s\n' "${skip[@]}" | awk -F= '
+    NR==FNR {skip[$0]=1; next}
+    $1=="DATA" && ($2 in skip) {print "SKIPPED_DATA=" $2; next}
+    $1=="DATA_BYTES" || $1=="PATH_USER" || $1=="PATH_GROUP" {
+      split($2, parts, ":")
+      if (parts[1] in skip) next
+    }
+    {print}
+  ' - "$inventory" > "$plan"
+}
+
+migration_path_supported() {
+  case "$1" in
+    /srv|/var/www) return 0 ;;
+    /opt/srv-helper*) return 1 ;;
+    /opt/*|/home/*) [[ "${1##*/}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ ]] && [[ "${1%/*}" == /opt || "${1%/*}" == /home ]] ;;
+    *) return 1 ;;
+  esac
+}
+
+migration_check_source_volumes() {
+  local inventory=$1 mount item
+  while IFS= read -r mount; do
+    while IFS= read -r item; do
+      if [[ "$item" == "$mount" || "$item" == "$mount/"* || "$mount" == "$item/"* ]]; then
+        fail "Masir $item ba volume external $mount overlap darad."
+        return 1
+      fi
+    done < <(sed -n 's/^DATA=//p' "$inventory")
+  done < <(sed -n 's/^EXTERNAL_VOLUME=//p; s/^VOLUME=//p' "$inventory")
+}
+
 migration_preflight_restore() {
   local inventory=$1 mode=${2:-} item pg port engine version current package available required parent kind id expected actual
+  migration_check_source_volumes "$inventory" || return 1
   while IFS= read -r item; do
-    case "$item" in /srv|/var/www) ;; *) return 1 ;; esac
+    migration_path_supported "$item" || return 1
     [[ "$(realpath -m -- "$item")" == "$item" ]] || { fail "Masir maghsad symlink darad: $item"; return 1; }
     parent=${item%/*}; parent=${parent:-/}
     required=$(awk -F= -v prefix="$item:" '$1=="DATA_BYTES" && index($2,prefix)==1 {print substr($2,length(prefix)+1); exit}' "$inventory")
@@ -260,7 +304,7 @@ migration_preflight_restore() {
     actual=$(getent "$kind" "$id" | cut -d: -f1) || actual=''
     [[ "$actual" == "$expected" ]] ||
       { fail "$kind $id ($expected) dar maghsad yeksan nist."; return 1; }
-  done < <(sed -n 's/^USER_ID=/passwd:/p; s/^GROUP_ID=/group:/p' "$inventory" | LC_ALL=C sort -u)
+  done < <(sed -n 's/^USER_ID=/passwd:/p; s/^GROUP_ID=/group:/p; s|^PATH_USER=[^:]*:|passwd:|p; s|^PATH_GROUP=[^:]*:|group:|p' "$inventory" | LC_ALL=C sort -u)
   if grep -q '^PG_TABLESPACE=' "$inventory"; then
     fail 'PostgreSQL tablespace joda darad. Restore dasti niaz ast.'
     return 1
@@ -290,14 +334,37 @@ migration_preflight_restore() {
     current=$("$engine" --batch --skip-column-names -e \
       "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME NOT IN ('mysql','sys','performance_schema','information_schema')") || return 1
     [[ -z "$current" ]] || { fail 'MySQL/MariaDB maghsad schema karbari darad.'; return 1; }
-    warn 'MySQL/MariaDB: schema, data, routine va trigger restore mishavand. Account va grant dasti set mishavand.'
+    info 'MySQL/MariaDB: schema, data, routine va trigger restore mishavand.'
   fi
 }
 
+migration_check_mysql_accounts() {
+  local engine=$1 inventory=$2 existing account
+  existing=$("$engine" --batch --skip-column-names -e "SELECT CONCAT(QUOTE(User),'@',QUOTE(Host)) FROM mysql.user ORDER BY User,Host") || return 1
+  while IFS= read -r account; do
+    if grep -Fx -- "$account" <<< "$existing" >/dev/null; then
+      fail "Account az ghabl dar maghsad vojood darad: $account"
+      return 1
+    fi
+  done < <(sed -n 's/^MYSQL_ACCOUNT=//p' "$inventory")
+}
+
 migration_restore() {
-  local inventory=$1 work=$2 item port engine names target_data old_data parent staged pg
+  local inventory=$1 work=$2 item port engine names target_data old_data parent staged pg answer migrate_accounts=0
   info 'Maghsad dobare barresi mishavad.'
   migration_preflight_restore "$inventory" --plan || return 1
+  engine=$(migration_value "$inventory" MYSQL)
+  if [[ -s "$work/mysql-accounts.sql" ]] && grep -q '^MYSQL_ACCOUNT=' "$inventory"; then
+    info 'MySQL/MariaDB account-ha va grant-ha az archive peyda shodand.'
+    warn 'In entekhab password hashes va dastresi account-haye mabda ra faal mikonad.'
+    if confirm 'Account va grant-haye MySQL/MariaDB ham restore shavand?'; then
+      migration_check_mysql_accounts "$engine" "$inventory" || return 1
+      migrate_accounts=1
+    else
+      answer=$?
+      ((answer == 1)) || return "$answer"
+    fi
+  fi
   pg=$(migration_value "$inventory" POSTGRES)
   if [[ -n "$pg" ]] && ! command -v pg_lsclusters >/dev/null; then
     [[ "${pg%%:*}" =~ ^[0-9]+$ ]] || return 1
@@ -305,14 +372,16 @@ migration_restore() {
     DEBIAN_FRONTEND=noninteractive apt-get install -y "postgresql-${pg%%:*}" || return 1
   fi
   migration_preflight_restore "$inventory" || return 1
-  local -a items=()
+  local -a items=() exclude=()
   mapfile -t items < <(sed -n 's/^DATA=//p' "$inventory")
   if (("${#items[@]}")); then
     mkdir "$work/restore" || return 1
     for item in "${items[@]}"; do
       info "Amade sazi file-ha: $item"
+      exclude=()
+      if [[ "$item" == /home/* ]]; then exclude=("--exclude=.${item}/.ssh"); fi
       tar --extract --gzip --file="$work/root.tar.gz" --directory="$work/restore" \
-        --numeric-owner --same-owner --same-permissions --acls --xattrs -- "./${item#/}" || return 1
+        --numeric-owner --same-owner --same-permissions --acls --xattrs "${exclude[@]}" -- "./${item#/}" || return 1
       [[ -d "$work/restore$item" && ! -L "$work/restore$item" ]] || return 1
     done
   fi
@@ -342,6 +411,18 @@ migration_restore() {
     [[ "$names" == "$(sed -n 's/^MYSQL_DATABASE=//p' "$inventory")" ]] || { fail 'List schema MySQL/MariaDB yeksan nist.'; return 1; }
     success 'MySQL/MariaDB import va list schema-ha barrasi shod.'
   fi
+  if ((migrate_accounts)); then
+    migration_check_mysql_accounts "$engine" "$inventory" || return 1
+    if ! "$engine" < "$work/mysql-accounts.sql" > "$work/mysql-accounts-import.log" 2>&1; then
+      fail 'Import account va grant kamel nashod. Backup ra negah darid.'
+      return 1
+    fi
+    names=$("$engine" --batch --skip-column-names -e "SELECT CONCAT(QUOTE(User),'@',QUOTE(Host)) FROM mysql.user") || return 1
+    while IFS= read -r item; do
+      grep -Fx -- "$item" <<< "$names" >/dev/null || { fail "Account restore nashod: $item"; return 1; }
+    done < <(sed -n 's/^MYSQL_ACCOUNT=//p' "$inventory")
+    success 'Account va grant-haye MySQL/MariaDB import shodand.'
+  fi
   for item in "${items[@]}"; do
     info "Nasb file-ha: $item"
     parent=${item%/*}; parent=${parent:-/}
@@ -363,15 +444,102 @@ migration_restore() {
   info 'Service va config-haye digar baraye restore dasti dar archive hastand.'
 }
 
+migration_unpack_bundle() {
+  python3 - "$1" "$2" <<'PYCODE'
+import hashlib
+import pathlib
+import shutil
+import sys
+import tarfile
+
+archive, output = sys.argv[1:]
+root = pathlib.Path(output)
+required = {"inventory", "packages.tsv", "services.txt", "mounts.txt", "root.tar.gz", "SHA256SUMS"}
+allowed = required | {"postgres.sql", "mysql.sql", "mysql-accounts.sql"}
+with tarfile.open(archive, "r:") as stream:
+    members = stream.getmembers()
+    names = {member.name for member in members}
+    if len(names) != len(members) or not required <= names <= allowed:
+        sys.exit("Unexpected backup members")
+    for member in members:
+        if not member.isreg():
+            sys.exit("Unexpected backup member type")
+        with stream.extractfile(member) as source, (root / member.name).open("xb") as target:
+            shutil.copyfileobj(source, target)
+checks = {}
+for line in (root / "SHA256SUMS").read_text(encoding="ascii").splitlines():
+    digest, name = line.split("  ", 1)
+    if name in checks or name not in names - {"SHA256SUMS"}:
+        sys.exit("Unexpected manifest entry")
+    checks[name] = digest
+if set(checks) != names - {"SHA256SUMS"}:
+    sys.exit("Incomplete checksum manifest")
+for name, expected in checks.items():
+    with (root / name).open("rb") as source:
+        result = hashlib.sha256()
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            result.update(block)
+    if result.hexdigest() != expected:
+        sys.exit(f"Checksum mismatch: {name}")
+PYCODE
+}
+
+migration_from_bundle() (
+  local bundle path work inventory size free board
+  need_root && need_cmd gpg && need_cmd python3 || return 1
+  [[ -t 0 && -t 1 ]] || return 1
+  prompt 'Masir archive ramznegari-shode (.tar.gpg)' bundle || return $?
+  [[ "$bundle" == /* && -f "$bundle" && ! -L "$bundle" && -s "$bundle" ]] || { fail 'Masir backup motabar nist.'; return 1; }
+  path="$(backup_dir)/migration"
+  install -d -m 700 "$path" || return 1
+  exec 9>"$path/.lock" || return 1
+  flock -n 9 || return 1
+  size=$(stat -c %s -- "$bundle") || return 1
+  free=$(df -PB1 "$path" | awk 'NR==2 {print $4}')
+  [[ "$free" =~ ^[0-9]+$ ]] && ((free > size * 4 + 268435456)) || { fail 'Fazaye disk baraye restore kafi nist.'; return 1; }
+  work=$(mktemp -d "$path/.restore.XXXXXXXX") || return 1
+  trap 'rm -rf -- "$work"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  step 1 3 'Ramzgoshaei va barresi archive'
+  export GPG_TTY
+  GPG_TTY=$(tty) || return 1
+  gpg --decrypt --no-symkey-cache --output "$work/bundle.tar" "$bundle" || return 1
+  migration_unpack_bundle "$work/bundle.tar" "$work" || { fail 'Backup ya checksum motabar nist.'; return 1; }
+  rm -f -- "$work/bundle.tar" || return 1
+  inventory="$work/inventory"
+  . /etc/os-release
+  board=$(dpkg --print-architecture) || return 1
+  [[ "$ID" == ubuntu && "$(migration_value "$inventory" OS)" == ubuntu &&
+     "$(migration_value "$inventory" VERSION)" == "$VERSION_ID" &&
+     "$(migration_value "$inventory" ARCH)" == "$board" ]] ||
+    { fail 'Ubuntu ya architecture backup ba maghsad yeksan nist.'; return 1; }
+  migration_prepare_restore_plan "$inventory" "$work/restore-inventory" || return 1
+  inventory="$work/restore-inventory"
+  grep -Eq '^(DATA|POSTGRES|MYSQL_DATABASE|MYSQL_ACCOUNT)=' "$inventory" ||
+    { warn 'Hich file ya database poshtibani-shode baraye restore dar archive nist.'; return 1; }
+  [[ -z $(migration_value "$inventory" POSTGRES) || -s "$work/postgres.sql" ]] || return 1
+  if grep -q '^MYSQL_DATABASE=' "$inventory"; then [[ -s "$work/mysql.sql" ]] || return 1; fi
+  step 2 3 'Pishnamayesh va barresi maghsad'
+  migration_preflight_restore "$inventory" --plan || return 1
+  sed -n 's/^DATA=/  File: /p; s/^PG_DATABASE=/  PostgreSQL: /p; s/^MYSQL_DATABASE=/  MySQL\/MariaDB: /p' "$inventory"
+  confirm 'Restore az in backup shoroo shavad?' || return $?
+  step 3 3 'Bazsazi va barresi maghsad'
+  migration_restore "$inventory" "$work" || return $?
+  success 'Restore az backup ba movafaghiat tamam shod.'
+)
+
 migration_menu() {
   local choice rc
   choose_menu choice 'BACKUP VA ENTEGHAL SERVER' 'In menu ra rooye Ubuntu maghsad ejra konid.' \
     1 'Backup ramznegari-shode az server ghadimi' \
     2 'Backup va restore file/database-haye poshtibani-shode' \
+    3 'Restore az archive ramznegari-shode (bedoon SSH)' \
     0 'Bargasht' || return $?
   case "$choice" in
     1) migration_wizard backup; rc=$? ;;
     2) migration_wizard restore; rc=$? ;;
+    3) migration_from_bundle; rc=$? ;;
     0) return 0 ;;
     *) warn 'Gozine namotabar.'; return 1 ;;
   esac

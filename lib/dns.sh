@@ -50,66 +50,147 @@ dns_candidate_records() {
     'ControlD|76.76.2.0' 'Yandex|77.88.8.8'
 }
 
+dns_resolv_file() { printf '/etc/resolv.conf'; }
+dns_resolved_file() { printf '/etc/systemd/resolved.conf.d/90-srv-helper.conf'; }
+dns_stub_file() { printf '/run/systemd/resolve/stub-resolv.conf'; }
+
 dns_status() {
+  local resolver
+  resolver=$(dns_resolv_file)
   section 'DNS FELI'
-  if command -v resolvectl >/dev/null; then resolvectl status 2>/dev/null | sed -n '1,80p'
-  else cat /etc/resolv.conf 2>/dev/null || :; fi
+  info "resolv.conf: $(readlink "$resolver" || printf '%s' "$resolver")"
+  if [[ -r "$resolver" ]]; then
+    awk '$1=="nameserver" {print "  nameserver " $2}' "$resolver"
+  fi
+  if dns_resolved_active; then
+    resolvectl status 2>/dev/null | sed -n '1,80p'
+  fi
 }
 
-apply_dns() (
-  local profile=$1 servers=$2 target='/etc/systemd/resolved.conf.d/90-srv-helper.conf'
-  need_root || return 1
-  if ! command -v systemctl >/dev/null || ! systemctl is-active --quiet systemd-resolved; then
-    fail 'systemd-resolved faal nist. Baraye jologiri az DNS outage hich taghiri anjam nashod.'
-    return 1
+dns_resolved_active() {
+  command -v resolvectl >/dev/null && systemctl is-active --quiet systemd-resolved
+}
+
+dns_expected_servers() {
+  python3 -c '
+import ipaddress, sys
+addresses = lambda text: {ipaddress.ip_address(value) for value in text.split()}
+sys.exit(addresses(sys.argv[1]) != addresses(sys.argv[2]))
+' "$1" "$2" 2>/dev/null
+}
+
+dns_verify_profile() {
+  local backend=$1 servers=$2 resolver configured domains
+  resolver=$(dns_resolv_file)
+  if [[ "$backend" == resolved ]]; then
+    [[ "$(readlink -f -- "$resolver")" == "$(dns_stub_file)" ]] || return 1
+    configured=$(LC_ALL=C resolvectl dns) || return 1
+    configured=$(sed -n 's/^Global:[[:blank:]]*//p' <<< "$configured")
+    dns_expected_servers "$configured" "$servers" || return 1
+    domains=$(LC_ALL=C resolvectl domain) || return 1
+    grep -E '^Global:.*[[:blank:]]~\.([[:blank:]]|$)' <<< "$domains" >/dev/null || return 1
+    if grep -E '^Link .*:([[:blank:]]+[^[:blank:]]+)*[[:blank:]]+(~\.|~?example\.com|~?com)([[:blank:]]|$)' <<< "$domains" >/dev/null; then
+      fail 'DNS link ya VPN yek route ~. digar darad.'
+      return 1
+    fi
+  else
+    configured=$(awk '$1=="nameserver" {print $2}' "$resolver") || return 1
+    dns_expected_servers "$configured" "$servers" || return 1
   fi
-  command -v resolvectl >/dev/null || { fail 'resolvectl peyda nashod'; return 1; }
-  local server snapshot staged
+  timeout 8 dig -r +time=2 +tries=1 +short example.com A |
+    grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' >/dev/null &&
+    timeout 8 getent ahosts example.com >/dev/null 2>&1
+}
+
+dns_publish_file() (
+  local target=$1 source=$2 contents=$3 staged
+  staged=$(mktemp -d "${target%/*}/.srv-helper-dns.XXXXXXXX") || return 1
+  trap 'rm -rf -- "$staged"' EXIT
+  case "$source" in
+    link) ln -s -- "$contents" "$staged/new" || return 1 ;;
+    text) printf '%s\n' "$contents" > "$staged/new" && chmod 644 "$staged/new" || return 1 ;;
+    backup) cp -aT -- "$contents" "$staged/new" || return 1 ;;
+  esac
+  mv -fT -- "$staged/new" "$target"
+)
+
+apply_dns() (
+  local profile=$1 servers=$2 target resolver snapshot backend committed=0 server stub config
   local -a addresses
-  [[ "$servers" =~ ^[0-9a-fA-F:.]+(\ [0-9a-fA-F:.]+)*$ ]] || { fail 'DNS address ha namotabar hastand'; return 1; }
+  need_root && need_cmd python3 || return 1
+  target=$(dns_resolved_file)
+  resolver=$(dns_resolv_file)
+  stub=$(dns_stub_file)
   read -r -a addresses <<< "$servers"
-  need_cmd python3 || return 1
-  python3 -c 'import ipaddress, sys; [ipaddress.ip_address(address) for address in sys.argv[1:]]' "${addresses[@]}" 2>/dev/null ||
-    { fail 'DNS address ha namotabar hastand'; return 1; }
+  [[ -n "$servers" ]] && dns_expected_servers "$servers" "$servers" || { fail 'DNS address namotabar ast.'; return 1; }
   info "Profile DNS: $profile ($servers)"
-  ensure_dig || return 1
+  ensure_dig || return $?
   for server in "${addresses[@]}"; do
-    info "Test dastresi DNS: $server"
-    if ! dig -r +time=2 +tries=1 +short "@$server" example.com A 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' >/dev/null; then
+    if ! dig -r +time=2 +tries=1 +short "@$server" example.com A |
+       grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' >/dev/null; then
       fail "DNS pasokh nadad: $server"
       return 1
     fi
   done
+  if dns_resolved_active; then
+    backend=resolved
+    if [[ -L "$resolver" && "$(readlink -f -- "$resolver")" != "$stub" &&
+          "$(readlink -f -- "$resolver")" != /run/systemd/resolve/resolv.conf ]]; then
+      fail 'resolv.conf be manager digari vasl ast. Aval manager DNS ra barrasi konid.'
+      return 1
+    fi
+  elif [[ ! -L "$resolver" && ( ! -e "$resolver" || -f "$resolver" ) ]]; then
+    backend=static
+  else
+    fail 'resolv.conf be manager digari vasl ast va systemd-resolved faal nist.'
+    return 1
+  fi
+  if [[ -f "$resolver" && ! -L "$resolver" ]] &&
+     grep -Ei 'generated by (NetworkManager|resolvconf|dhclient)|managed by (NetworkManager|resolvconf)' "$resolver" >/dev/null; then
+    fail 'resolv.conf tavasote network manager modiriat mishavad. DNS ra dar haman manager set konid.'
+    return 1
+  fi
   dns_status
-  info "Proposed resolvers: $servers"
+  info "Proposed resolvers: $servers ($backend)"
   confirm 'Apply DNS settings?' || return $?
-  install -d -m 755 /etc/systemd/resolved.conf.d || return 1
+  if [[ "$backend" == resolved ]]; then install -d -m 755 "${target%/*}" || return 1; fi
   install -d -m 700 "$(backup_dir)/dns" "$(state_dir)" || return 1
   exec 9>"$(state_dir)/dns.lock" || return 1
   flock -n 9 || { fail 'Another DNS change is in progress.'; return 1; }
   snapshot=$(dns_snapshot "$target") || return 1
-  staged=$(mktemp "${target%/*}/.srv-helper-dns.XXXXXXXX") || return 1
-  if printf '# Managed by SRV Helper.\n[Resolve]\nDNS=%s\nFallbackDNS=\nDomains=~.\n' "$servers" > "$staged" &&
-     chmod 644 "$staged" && mv -fT -- "$staged" "$target" && dns_validate; then
-    success "DNS profile applied: $profile"
-    info "Backup: $snapshot"
-    dns_status
-    return 0
+  dns_apply_cleanup() {
+    local rc=$?
+    trap - EXIT
+    if ((!committed)); then
+      fail 'DNS validate nashod. Dar hale bazgardani.'
+      restore_dns_unchecked "$snapshot" || fail "DNS rollback incomplete: $snapshot"
+    fi
+    exit "$rc"
+  }
+  trap dns_apply_cleanup EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  if [[ "$backend" == resolved ]]; then
+    printf -v config '# Managed by SRV Helper.\n[Resolve]\nDNS=\nDNS=%s\nFallbackDNS=\nDomains=\nDomains=~.\nDNSStubListener=yes' "$servers"
+    dns_publish_file "$target" text "$config" && systemctl restart systemd-resolved &&
+      [[ -r "$stub" ]] && dns_publish_file "$resolver" link "$stub" || return 1
+  else
+    config=''
+    if [[ -r "$resolver" ]]; then config=$(awk '$1=="search" || $1=="domain" || $1=="options"' "$resolver"); fi
+    for server in "${addresses[@]}"; do config+=$'\n'"nameserver $server"; done
+    dns_publish_file "$resolver" text "$config" || return 1
   fi
-  rm -f -- "$staged"
-  fail 'DNS validation failed. Restoring the previous profile.'
-  restore_dns_unchecked "$snapshot" || fail "DNS rollback incomplete: $snapshot"
-  return 1
+  dns_verify_profile "$backend" "$servers" || return 1
+  committed=1
+  success "DNS profile applied: $profile ($servers)"
+  info "Backup: $snapshot"
+  if [[ "$backend" == resolved ]]; then info '127.0.0.53 dar resolv.conf normal ast; upstream DNS dar resolvectl namayesh dade mishavad.'; fi
+  dns_status
 )
 
-dns_validate() {
-  systemctl restart systemd-resolved &&
-    timeout 8 resolvectl query example.com >/dev/null 2>&1 &&
-    timeout 8 getent ahosts example.com >/dev/null 2>&1
-}
-
 dns_snapshot() {
-  local target=$1 backup
+  local target=$1 backup resolver
+  resolver=$(dns_resolv_file)
   backup=$(mktemp -d "$(backup_dir)/dns/change-$(date -u +%Y%m%dT%H%M%SZ).XXXXXXXX") || return 1
   if [[ -e "$target" || -L "$target" ]]; then
     cp -aT -- "$target" "$backup/previous.conf" || return 1
@@ -117,19 +198,36 @@ dns_snapshot() {
   else
     printf 'none\n' > "$backup/previous.type" || return 1
   fi
+  if [[ -e "$resolver" || -L "$resolver" ]]; then
+    cp -aT -- "$resolver" "$backup/resolver.conf" || return 1
+    printf 'existing\n' > "$backup/resolver.type" || return 1
+  else
+    printf 'none\n' > "$backup/resolver.type" || return 1
+  fi
   printf '%s\n' "$backup"
 }
 
 restore_dns_unchecked() {
-  local backup=$1 target='/etc/systemd/resolved.conf.d/90-srv-helper.conf' typ
+  local backup=$1 target resolver typ
+  target=$(dns_resolved_file)
+  resolver=$(dns_resolv_file)
   [[ -f "$backup/previous.type" ]] || return 1
   IFS= read -r typ < "$backup/previous.type"
   case "$typ" in
-    existing) cp -aT -- "$backup/previous.conf" "$target" || return 1 ;;
+    existing) dns_publish_file "$target" backup "$backup/previous.conf" || return 1 ;;
     none) rm -f -- "$target" || return 1 ;;
     *) return 1 ;;
   esac
-  dns_validate
+  if [[ -f "$backup/resolver.type" ]]; then
+    IFS= read -r typ < "$backup/resolver.type"
+    case "$typ" in
+      existing) dns_publish_file "$resolver" backup "$backup/resolver.conf" || return 1 ;;
+      none) rm -f -- "$resolver" || return 1 ;;
+      *) return 1 ;;
+    esac
+  fi
+  if dns_resolved_active; then systemctl restart systemd-resolved || return 1; fi
+  timeout 8 getent ahosts example.com >/dev/null 2>&1
 }
 
 restore_dns() (
@@ -157,7 +255,7 @@ restore_dns() (
   [[ "$choice" =~ ^[1-9][0-9]?$ ]] && ((choice <= index)) || return 1
   snapshot=${snapshots[choice-1]}
   confirm "Restore ${snapshot##*/}?" || return 1
-  current=$(dns_snapshot /etc/systemd/resolved.conf.d/90-srv-helper.conf) || return 1
+  current=$(dns_snapshot "$(dns_resolved_file)") || return 1
   if restore_dns_unchecked "$snapshot"; then
     success 'DNS profile restored.'
     dns_status

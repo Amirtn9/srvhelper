@@ -3,13 +3,47 @@
 set -euo pipefail
 export LC_ALL=C
 ((EUID == 0)) || exit 1
+migration_mounts() {
+  local mount fs
+  while read -r mount fs; do
+    mount=$(printf '%b' "$mount")
+    [[ -d "$mount" && "$mount" != *$'\n'* ]] || continue
+    case "$mount" in /|/dev/*|/proc/*|/sys/*|/run/*|/var/lib/docker/*|/var/lib/containers/*|/var/backups/srv-helper/*) continue ;; esac
+    case "$fs" in
+      ext[234]|xfs|btrfs|zfs|f2fs|vfat) printf 'LOCAL_VOLUME=%s\n' "$mount" ;;
+      nfs|nfs4|cifs|ceph|fuse*) printf 'EXTERNAL_VOLUME=%s\n' "$mount" ;;
+    esac
+  done < <(findmnt -rn -o TARGET,FSTYPE)
+}
+
+migration_app_paths() {
+  local path
+  for path in /srv /var/www /opt/* /home/*; do
+    [[ -d "$path" && ! -L "$path" ]] || continue
+    case "$path" in
+      /opt/srv-helper*) continue ;;
+      /opt/*|/home/*) [[ "${path##*/}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ ]] || continue ;;
+    esac
+    [[ -n $(find "$path" -mindepth 1 -maxdepth 1 -print -quit) ]] && printf '%s\n' "$path"
+  done
+  return 0
+}
+
+migration_mysql_account_names() {
+  "$1" --batch --skip-column-names -e "SELECT CONCAT(QUOTE(User),'@',QUOTE(Host)) FROM mysql.user WHERE User NOT IN ('root','mysql.session','mysql.sys','mysql.infoschema','mariadb.sys','debian-sys-maint') ORDER BY User,Host"
+}
+
 mode=${1:-}
 case "$mode" in
   inventory)
     . /etc/os-release
     printf 'OS=%s\nVERSION=%s\nARCH=%s\nMACHINE=%s\n' "$ID" "$VERSION_ID" "$(dpkg --print-architecture)" "$(cat /etc/machine-id)"
-    printf 'BYTES=%s\n' "$(timeout 120 du -sx -B1 / 2>/dev/null | awk '{print $1}')"
-    for path in /srv /var/www; do
+    mounts=$(migration_mounts)
+    mapfile -t local_volumes < <(sed -n 's/^LOCAL_VOLUME=//p' <<< "$mounts")
+    bytes=$(timeout 120 du -sx -B1 / "${local_volumes[@]}" | awk '{total+=$1} END {printf "%.0f",total}')
+    printf 'BYTES=%s\n' "$bytes"
+    printf '%s\n' "$mounts"
+    while IFS= read -r path; do
       if [[ -d "$path" && ! -L "$path" ]] && [[ -n $(find "$path" -mindepth 1 -maxdepth 1 -print -quit) ]]; then
         printf 'DATA=%s\n' "$path"
         data_bytes=$(du -sx -B1 "$path" | awk '{print $1}')
@@ -17,10 +51,10 @@ case "$mode" in
         find "$path" -xdev -printf '%U:%G\n' | sort -u | while IFS=: read -r uid gid; do
           user=$(getent passwd "$uid" | cut -d: -f1) || user=''
           group=$(getent group "$gid" | cut -d: -f1) || group=''
-          printf 'USER_ID=%s:%s\nGROUP_ID=%s:%s\n' "$uid" "$user" "$gid" "$group"
+          printf 'PATH_USER=%s:%s:%s\nPATH_GROUP=%s:%s:%s\n' "$path" "$uid" "$user" "$path" "$gid" "$group"
         done
       fi
-    done
+    done < <(migration_app_paths)
     if command -v pg_lsclusters >/dev/null; then
       clusters=$(pg_lsclusters -h)
       awk 'NF {print "POSTGRES="$1":"$2":"$3":"$4}' <<< "$clusters"
@@ -42,28 +76,25 @@ case "$mode" in
         printf 'MYSQL=%s\nMYSQL_VERSION=%s\n' "$client" "$version"
         dbs=$("$client" --batch --skip-column-names -e "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME NOT IN ('mysql','sys','performance_schema','information_schema') ORDER BY SCHEMA_NAME")
         if [[ -n "$dbs" ]]; then printf '%s\n' "$dbs" | sed 's/^/MYSQL_DATABASE=/'; fi
+        accounts=$(migration_mysql_account_names "$client")
+        if [[ -n "$accounts" ]]; then printf '%s\n' "$accounts" | sed 's/^/MYSQL_ACCOUNT=/'; fi
         break
       fi
     done
     for service in mysql.service mariadb.service postgresql.service docker.service; do
       if systemctl is-active --quiet "$service" 2>/dev/null; then printf 'ACTIVE=%s\n' "$service"; fi
     done
-    findmnt -rn -o TARGET,FSTYPE | while read -r mount fs; do
-      case "$fs" in ext[234]|xfs|btrfs|zfs|nfs|nfs4|cifs|ceph|fuseblk|vfat) ;; *) continue ;; esac
-      [[ "$mount" != / ]] || continue
-      mount=$(printf '%b' "$mount")
-      [[ -d "$mount" && "$mount" != *$'\n'* ]] || continue
-      printf 'VOLUME=%s\n' "$mount"
-    done
     ;;
   packages) dpkg-query -W -f='${db:Status-Abbrev}\t${binary:Package}\t${Version}\n' ;;
   services) SYSTEMD_COLORS=0 systemctl list-unit-files --type=service --no-pager --no-legend ;;
   mounts) findmnt -rn -o TARGET,FSTYPE ;;
   filesystem)
+    mounts=$(migration_mounts)
+    mapfile -t local_volumes < <(sed -n 's/^LOCAL_VOLUME=//p' <<< "$mounts")
     tar --create --file=- --numeric-owner --acls --xattrs --sparse --one-file-system \
       --exclude='./proc' --exclude='./sys' --exclude='./dev' --exclude='./run' \
       --exclude='./tmp' --exclude='./var/tmp' --exclude='./swapfile*' --exclude='./swap.img' \
-      --exclude='./var/backups/srv-helper' --directory=/ . | gzip -1
+      --exclude='./var/backups/srv-helper' --directory=/ . "${local_volumes[@]/#/.}" | gzip -1
     ;;
   postgres)
     version=$2 cluster=$3 port=$4
@@ -74,7 +105,7 @@ case "$mode" in
   mysql-accounts)
     client=$2
     [[ "$client" == mysql || "$client" == mariadb ]] || exit 2
-    accounts=$("$client" --batch --skip-column-names -e "SELECT CONCAT(QUOTE(User),'@',QUOTE(Host)) FROM mysql.user WHERE User NOT IN ('root','mysql.session','mysql.sys','mysql.infoschema','mariadb.sys','debian-sys-maint') ORDER BY User,Host")
+    accounts=$(migration_mysql_account_names "$client")
     if [[ -z "$accounts" ]]; then exit 0; fi
     while IFS= read -r account; do
       definition=$("$client" --batch --raw --skip-column-names -e "SHOW CREATE USER $account")

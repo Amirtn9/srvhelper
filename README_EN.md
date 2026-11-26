@@ -16,7 +16,7 @@ Use `srv-helper --live` for the live resource dashboard. Server Doctor can compa
 
 ## Server backup and migration
 
-Start **Backup va Enteghal Server** on the new Ubuntu server and connect to the old one over SSH. Match Ubuntu releases and architectures, obtain the SSH host fingerprint from the trusted source console, and pause application writes for consistency. The wizard creates an encrypted filesystem and database backup first. Optional restore covers empty `/srv`, `/var/www`, and supported database engines. Separate volumes and live operating-system replacement require a separate recovery procedure. See the [Persian migration guide](README.md#بکاپ-و-انتقال-بین-دو-vps) for scope and prerequisites.
+Start **Backup va Enteghal Server** on the new Ubuntu server and connect to the old one over SSH. Match Ubuntu releases and architectures, obtain the SSH host fingerprint from the trusted source console, and pause application writes for consistency. The wizard creates an encrypted filesystem and database backup first. Optional restore covers empty `/srv`, `/var/www`, application and user directories under `/opt` and `/home`, and supported database engines. Supported local volumes are included as files. The wizard can restore from a verified encrypted backup without the source. Bootloader and live operating-system replacement require a separate recovery procedure. See the [Persian migration guide](README.md#بکاپ-و-انتقال-بین-دو-vps) for scope and prerequisites.
 
 ## Main sections
 
@@ -105,7 +105,7 @@ Wildcard certificates are not issued by the HTTP-01 flow; they require DNS-01 va
 
 - System changes require root and confirmation.
 - DNS and APT source changes create backups; failed APT updates trigger rollback.
-- DNS changes use `systemd-resolved`; systems without an active `systemd-resolved` service are not modified.
+- DNS changes use active `systemd-resolved` or an unmanaged static resolver file. A resolver owned by NetworkManager, dhclient, or resolvconf must be managed through that service.
 - Firewall-wide blocking rules and automatic package upgrades are intentionally excluded from Smart Setup.
 - Always keep an out-of-band console available before changing network settings on a remote VPS.
 
