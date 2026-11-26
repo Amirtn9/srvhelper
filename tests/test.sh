@@ -166,7 +166,7 @@ exit_rc=$(printf 'exit\n' | bash -c 'source "$1/lib/ui.sh"; prompt test value >/
 bash "$home/install.sh" --help | grep -- '--check' >/dev/null
 
 # Terminal UI is ASCII/Finglish. Check branding in loaded modules only.
-if LC_ALL=C grep -nP '[^\x00-\x7F]' "$home"/srv-helper.sh "$home"/hooks/*.sh "$home"/lib/*.sh; then
+if LC_ALL=C grep -nP '[^\x00-\x7F]' "$home"/srv-helper.sh "$home"/install.sh "$home"/hooks/*.sh "$home"/lib/*.sh; then
   echo 'FAIL non-ASCII interface strings' >&2; exit 1
 fi
 if grep -nEi 'behzad|netoptix|syshelper|mexenon|alinezamifar|mhsanaei' "$home"/srv-helper.sh "$home"/install.sh "$home"/lib/{ui,certs,mirrors,dns,system,maintenance,tunnels,automation}.sh; then
