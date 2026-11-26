@@ -36,13 +36,16 @@ migration_phase() {
 }
 
 migration_finish() {
-  local rc=$?
+  local rc=$? index
   trap - EXIT INT TERM
   case "$rc" in
-    20|21) migration_status[migration_step]=skipped ;;
+    20|21|22) migration_status[migration_step]=skipped ;;
     0) ;;
     *) migration_status[migration_step]=failed ;;
   esac
+  for index in "${!migration_status[@]}"; do
+    if [[ ${migration_status[index]} == pending ]]; then migration_status[index]=skipped; fi
+  done
   section 'GOZARESH ENTEGHAL'
   migration_checklist
   if [[ -n ${migration_bundle:-} && -f "$migration_bundle" ]]; then
@@ -57,7 +60,7 @@ migration_finish() {
   fi
   case "$rc" in
     0) success 'Marhalehaye entekhab-shode ba movafaghiat tamam shod.' ;;
-    20|21) warn 'Amaliat laghv shod.' ;;
+    20|21|22) warn 'Amaliat laghv shod.' ;;
     *) fail 'Amaliat kamel nashod. Gozaresh bala ra barrasi konid.' ;;
   esac
   exit "$rc"
@@ -167,7 +170,13 @@ migration_wizard() (
     migration_preflight_restore "$manifest" --plan || return 1
   fi
   if [[ -n "$mysql" ]]; then warn 'MySQL/MariaDB dump neveshtan ra movaghatian lock mikonad.'; fi
-  confirm 'Backup va amaliat entekhab-shode shoroo shavad?' || return $?
+  if confirm 'Backup va amaliat entekhab-shode shoroo shavad?'; then
+    :
+  else
+    value=$?
+    if ((value == 1)); then return 22; fi
+    return "$value"
+  fi
   migration_status[1]=ok
   migration_phase 2
   if [[ -n "$pg" ]]; then
