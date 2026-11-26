@@ -21,7 +21,7 @@ cpu_usage() {
 
 resource_meter() {
   local label=$1 percent=$2 detail=$3
-  local width=16 filled=0 color=$OK bar percent_label=' --' i
+  local width=16 filled=0 color=$OK active='' track='' percent_label=' --' i
   if [[ "$percent" =~ ^([0-9]{1,2}|100)$ ]]; then
     filled=$(((10#$percent * width + 50) / 100))
     printf -v percent_label '%3d%%' "$((10#$percent))"
@@ -29,11 +29,11 @@ resource_meter() {
     elif ((10#$percent >= 75)); then color=$WARN
     fi
   fi
-  bar=''
   for ((i=0; i<width; i++)); do
-    if ((i<filled)); then bar+='#'; else bar+='-'; fi
+    if ((i<filled)); then active+='#'; else track+='-'; fi
   done
-  printf '  %-5s [%s%s%s] %4s  %s\n' "$label" "$color" "$bar" "$RESET" "$percent_label" "$detail"
+  printf '  %s%-5s%s [%s%s%s%s%s] %s%4s%s  %s\n' \
+    "$WHITE" "$label" "$RESET" "$color" "$active" "$DIM" "$track" "$RESET" "$color" "$percent_label" "$RESET" "$detail"
 }
 
 quick_status() {

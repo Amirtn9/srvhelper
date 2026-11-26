@@ -135,10 +135,12 @@ select_ranked_mirror() {
     index=$((${#entries[@]} + 1))
     label=$(LC_ALL=C awk -v seconds="$seconds" 'BEGIN {printf "%5.0f ms", seconds * 1000}')
     entries+=("$url")
-    options+=("$index" "$label  $url")
+    options+=("$index" "$label  |  $url")
     ((index < 10)) || break
   done <<< "$ranking"
-  choose_menu choice 'SELECT AN APT MIRROR' 'Release fetch time (lower is better) | Suite and architecture verified' \
+  local heading
+  printf -v heading '\n  %s%s / %s / %s%s\n         %sFETCH TIME | MIRROR%s' "$DIM" "${region^^}" "$family" "$code" "$RESET" "$C1" "$RESET"
+  choose_menu choice 'SELECT AN APT MIRROR' "$heading" \
     "${options[@]}" 0 'Skip mirror change' || return $?
   if [[ ! "$choice" =~ ^([1-9]|10)$ ]] || ((choice > ${#entries[@]})); then
     [[ "$choice" == 0 ]] || warn 'Invalid mirror number.'

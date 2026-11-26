@@ -160,7 +160,7 @@ ranking=$(rank_mirrors test jammy 2>/dev/null)
     select_ranked_mirror selected iran noble ubuntu <<< '10'
     printf '\nSelected: %s\n' "$selected"
   )
-  [[ "$output" == *'100 ms  https://mirror10.example/ubuntu'* ]]
+  [[ "$output" == *'100 ms  |  https://mirror10.example/ubuntu'* ]]
   [[ "$output" == *'Selected: https://mirror10.example/ubuntu'* ]]
   [[ "$output" != *'mirror11.example'* ]]
   if select_ranked_mirror selected iran noble ubuntu <<< '0' >/dev/null; then exit 1; fi

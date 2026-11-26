@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Compact terminal UI. All interactive text is Finglish/ASCII.
 if [[ -t 1 && ${TERM:-dumb} != dumb && -z ${NO_COLOR:-} ]]; then
-  C1=$'\033[1;96m'; C2=$'\033[1;94m'; C3=$'\033[1;95m'
+  C1=$'\033[1;96m'; C2=$'\033[1;97m'; C3=$'\033[1;95m'
+  BRAND=$'\033[1;30;106m'; SELECTED=$'\033[1;30;47m'
   OK=$'\033[1;92m'; BAD=$'\033[1;91m'; WARN=$'\033[1;93m'
-  DIM=$'\033[2m'; WHITE=$'\033[1;97m'; RESET=$'\033[0m'
+  DIM=$'\033[37m'; WHITE=$'\033[1;97m'; RESET=$'\033[0m'
 else
-  C1='' C2='' C3='' OK='' BAD='' WARN='' DIM='' WHITE='' RESET=''
+  C1='' C2='' C3='' BRAND='' SELECTED='' OK='' BAD='' WARN='' DIM='' WHITE='' RESET=''
 fi
 
 SRV_EXIT_REQUESTED=${SRV_EXIT_REQUESTED:-0}
@@ -15,11 +16,10 @@ banner() {
   if [[ -t 1 && ${TERM:-dumb} != dumb && -z ${NO_CLEAR:-} ]]; then
     printf '\033[2J\033[H'
   fi
-  printf '\n  %sSRV HELPER%s  %sv%s%s\n' "$WHITE" "$RESET" "$DIM" "${SRV_VERSION:-}" "$RESET"
+  printf '\n  %s SRV HELPER %s  %sv%s%s\n' "$BRAND" "$RESET" "$DIM" "${SRV_VERSION:-}" "$RESET"
 }
 section() {
-  printf '\n  %s%s%s\n' "$C2" "$1" "$RESET"
-  printf '  %s------------------------------------%s\n' "$DIM" "$RESET"
+  printf '\n  %s::%s %s%s%s\n' "$C1" "$RESET" "$C2" "$1" "$RESET"
 }
 step() {
   local current=$1 total=$2 label=$3 filled='' empty='' n
@@ -57,19 +57,28 @@ choose_menu() {
   done
   local _menu_size=${#_menu_ids[@]} _menu_row=0 _menu_index _menu_key _menu_sequence
   local _menu_keyboard=0 _menu_number= _menu_candidate
+  local _menu_cols=80 _menu_width _menu_text
   if [[ -t 0 && -t 1 && ${TERM:-dumb} != dumb && -z ${NO_CLEAR:-} && -z ${SRV_PLAIN_MENU:-} ]]; then
     _menu_keyboard=1
+    _menu_cols=$(tput cols 2>/dev/null) || _menu_cols=80
+    [[ "$_menu_cols" =~ ^[0-9]+$ ]] || _menu_cols=80
   fi
 
   while :; do
     banner
-    if [[ -n "$_menu_summary" ]]; then printf '%s\n' "$_menu_summary"; fi
     section "$_menu_title"
+    if [[ -n "$_menu_summary" ]]; then printf '%s\n' "$_menu_summary"; fi
+    printf '\n'
+    _menu_width=$((_menu_cols - 9))
     for ((_menu_index=0; _menu_index<_menu_size; _menu_index++)); do
+      _menu_text=${_menu_labels[_menu_index]}
+      if ((_menu_keyboard && _menu_width >= 12 && ${#_menu_text} > _menu_width)); then
+        _menu_text="${_menu_text:0:_menu_width-3}..."
+      fi
       if ((_menu_keyboard && _menu_index == _menu_row)); then
-        printf '  %s>%s %2s  %s%s%s\n' "$C1" "$RESET" "${_menu_ids[_menu_index]}" "$WHITE" "${_menu_labels[_menu_index]}" "$RESET"
+        printf '  %s>%s %s %2s  %s %s\n' "$C1" "$RESET" "$SELECTED" "${_menu_ids[_menu_index]}" "$_menu_text" "$RESET"
       else
-        printf '  %s%4s%s  %s\n' "$C1" "${_menu_ids[_menu_index]}" "$RESET" "${_menu_labels[_menu_index]}"
+        printf '    %s %2s%s  %s\n' "$C1" "${_menu_ids[_menu_index]}" "$RESET" "$_menu_text"
       fi
     done
     if ((!_menu_keyboard)); then
@@ -78,7 +87,8 @@ choose_menu() {
       return $?
     fi
 
-    printf '\n  %sUp/Down | Enter | 0-9 | Esc: back | Q: exit%s\n' "$DIM" "$RESET"
+    printf '\n  %s[Up/Down]%s Move   %s[Enter]%s Select   %s[Number]%s Jump\n' "$C1" "$RESET" "$C1" "$RESET" "$C1" "$RESET"
+    printf '  %s[Esc]%s Back      %s[Q]%s Quit\n' "$DIM" "$RESET" "$DIM" "$RESET"
     while IFS= read -rsn1 _menu_key; do
       case "$_menu_key" in
         ''|$'\r')
@@ -107,6 +117,8 @@ choose_menu() {
                 case "$_menu_sequence" in
                   A) _menu_row=$(((_menu_row + _menu_size - 1) % _menu_size)); break 2 ;;
                   B) _menu_row=$(((_menu_row + 1) % _menu_size)); break 2 ;;
+                  H) _menu_row=0; break 2 ;;
+                  F) _menu_row=$((_menu_size - 1)); break 2 ;;
                   [a-zA-Z~]) break ;;
                 esac
               done
