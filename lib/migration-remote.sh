@@ -30,7 +30,7 @@ migration_app_paths() {
 }
 
 migration_mysql_account_names() {
-  "$1" --batch --skip-column-names -e "SELECT CONCAT(QUOTE(User),'@',QUOTE(Host)) FROM mysql.user WHERE User NOT IN ('root','mysql.session','mysql.sys','mysql.infoschema','mariadb.sys','debian-sys-maint') ORDER BY User,Host"
+  "$1" --batch --skip-column-names -e "SELECT CONCAT(QUOTE(User),'@',QUOTE(Host)) FROM mysql.user WHERE User NOT IN ('','root','mysql','mysql.session','mysql.sys','mysql.infoschema','mariadb.sys','debian-sys-maint') ORDER BY User,Host"
 }
 
 mode=${1:-}
