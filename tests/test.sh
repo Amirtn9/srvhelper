@@ -281,6 +281,19 @@ exit_rc=$(printf 'exit\n' | bash -c 'source "$1/lib/ui.sh"; prompt test value >/
 [[ "$(resource_meter CPU '' '')" == *'[----------------]   --'* ]]
 bash "$home/install.sh" --help | grep -- '--check' >/dev/null
 
+# The migration wizard must be reachable and reject unsafe restore scope and SSH operands.
+migration_screen=$(printf '6\n0\n0\n' | NO_COLOR=1 bash "$home/srv-helper.sh")
+[[ "$migration_screen" == *'BACKUP VA ENTEGHAL SERVER'* ]]
+(
+  source "$home/lib/migration.sh"
+  info() { :; }
+  fail() { :; }
+  ssh() { exit 99; }
+  if migration_remote postgres '16;invalid'; then exit 1; fi
+  if migration_preflight_restore /dev/stdin <<< 'DATA=/etc'; then exit 1; fi
+)
+bash "$home/lib/migration-remote.sh" unsupported >/dev/null 2>&1 && exit 1
+
 # Terminal UI is ASCII/Finglish. Check branding in loaded modules only.
 if LC_ALL=C grep -nP '[^\x00-\x7F]' "$home"/srv-helper.sh "$home"/install.sh "$home"/hooks/*.sh "$home"/lib/*.sh; then
   echo 'FAIL non-ASCII interface strings' >&2; exit 1

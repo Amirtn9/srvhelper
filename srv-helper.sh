@@ -4,7 +4,7 @@ set -o pipefail
 umask 027
 SRV_HOME="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 SRV_VERSION="1.0.0"
-for module in ui certs mirrors dns system maintenance tunnels automation doctor; do
+for module in ui certs mirrors dns system maintenance tunnels automation doctor migration; do
   # shellcheck source=/dev/null
   source "$SRV_HOME/lib/${module}.sh"
 done
@@ -42,6 +42,7 @@ main_menu() {
       3 'Khadamat Server' \
       4 'Abzar System' \
       5 'Server Doctor (read-only)' \
+      6 'Backup va Enteghal Server' \
       0 'Khorooj'; rc=$?
     if ((rc==20)); then SRV_BACK_REQUESTED=0; continue; fi
     ((rc==0)) || return 0
@@ -51,6 +52,7 @@ main_menu() {
       3) server_services_menu ;;
       4) system_menu ;;
       5) doctor_menu ;;
+      6) migration_menu ;;
       0|exit|quit) return 0 ;;
       *) warn 'Gozine namotabar'; pause ;;
     esac

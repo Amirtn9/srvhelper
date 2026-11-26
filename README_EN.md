@@ -14,6 +14,10 @@ Run `srv-helper --doctor` for a read-only report on disk space, DNS resolution, 
 
 Use `srv-helper --live` for the live resource dashboard. Server Doctor can compare snapshots within a session. Mirror Lab reports Release metadata age and a bounded index sample, and the certificate dashboard reports expiry and deployment synchronization.
 
+## Server backup and migration
+
+Start **Backup va Enteghal Server** on the new Ubuntu server and connect to the old one over SSH. Match Ubuntu releases and architectures, obtain the SSH host fingerprint from the trusted source console, and pause application writes for consistency. The wizard creates an encrypted filesystem and database backup first. Optional restore covers empty `/srv`, `/var/www`, and supported database engines. Separate volumes and live operating-system replacement require a separate recovery procedure. See the [Persian migration guide](README.md#بکاپ-و-انتقال-بین-دو-vps) for scope and prerequisites.
+
 ## Main sections
 
 ### 1. SSL & Certificates
